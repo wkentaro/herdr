@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Fixed
+- The agent-detection loop is now throttled against `detect_reset` notify storms, so an agent rapidly changing its foreground process group can no longer spin the detection task at high CPU.
+
 ## [0.7.0] - 2026-06-15
 
 ### Added
