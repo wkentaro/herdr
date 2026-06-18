@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Fixed
+- Fixed a potential client hang under heavy host-terminal backpressure: the client's stdin reader fed the same bounded channel the main loop drains, so a blocked frame write could stall input draining and deadlock both directions. Stdin now uses an independent unbounded channel and always drains.
+
 ## [0.7.0] - 2026-06-15
 
 ### Added
