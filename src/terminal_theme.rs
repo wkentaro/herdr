@@ -28,6 +28,13 @@ pub struct TerminalTheme {
     pub background: Option<RgbColor>,
 }
 
+/// Number of ANSI palette entries (0..16) Herdr queries from the host terminal
+/// so it can resolve indexed colors to real RGB (e.g. when dimming panes).
+pub const HOST_ANSI_PALETTE_LEN: usize = 16;
+
+/// The host terminal's 16 ANSI palette colors, as reported via OSC 4.
+pub type AnsiPalette = [Option<RgbColor>; HOST_ANSI_PALETTE_LEN];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DefaultColorKind {
     Foreground,

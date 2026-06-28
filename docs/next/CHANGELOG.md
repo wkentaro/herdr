@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Added
+- Added `ui.pane_dim` to dim inactive split panes so the focused pane stands out, including while a pane is active in terminal mode (WezTerm-style), resolving indexed colors through the host's queried ANSI palette. Defaults to `false`. Combine with `ui.pane_borders = false` and `ui.pane_gaps = false` for a minimal borderless layout where focus is shown by dimming alone.
+
 ## [0.7.1] - 2026-06-24
 
 ### Added
