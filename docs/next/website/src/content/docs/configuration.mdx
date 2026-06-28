@@ -310,6 +310,7 @@ prompt_new_tab_name = true
 pane_borders = true
 pane_gaps = true
 show_agent_labels_on_pane_borders = false
+pane_dim = false
 agent_panel_sort = "spaces"
 accent = "cyan"
 ```
@@ -333,6 +334,8 @@ Set `mouse_scroll_lines` to change how many pane scrollback lines each mouse whe
 Set `pane_borders = false` to remove split pane borders. Set `pane_gaps = false` to make split panes share compact divider borders. With borders disabled, pane gaps use one blank terminal cell between panes. Terminal cells are usually taller than they are wide, so a one-row gap between top/bottom panes can look larger than a one-column gap between left/right panes.
 
 Set `show_agent_labels_on_pane_borders = true` if you want detected agent labels in split pane borders when no manual pane label is set.
+
+Set `pane_dim = true` to dim inactive split panes so the focused pane stands out, similar to WezTerm. Unlike the default dimming that only applies while navigating, this keeps inactive panes dimmed even while a pane is active in terminal mode. Combine it with `pane_borders = false` and `pane_gaps = false` for a minimal, borderless layout where focus is shown by dimming alone.
 
 ## Notifications
 

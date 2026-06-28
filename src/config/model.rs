@@ -781,6 +781,9 @@ pub struct UiConfig {
     pub pane_gaps: bool,
     /// Show agent labels in split pane borders when no manual pane label is set. Default: false.
     pub show_agent_labels_on_pane_borders: bool,
+    /// Dim inactive split panes so the focused pane stands out, including while
+    /// a pane is active in terminal mode. Default: false.
+    pub pane_dim: bool,
     /// Agent sidebar ordering. Saved values are "spaces" or "priority". Default: "spaces".
     pub agent_panel_sort: AgentPanelSortConfig,
     /// Accent color for highlights, borders, and navigation UI.
@@ -971,6 +974,7 @@ impl Default for UiConfig {
             pane_borders: true,
             pane_gaps: true,
             show_agent_labels_on_pane_borders: false,
+            pane_dim: false,
             agent_panel_sort: AgentPanelSortConfig::Spaces,
             accent: "cyan".into(),
             toast: ToastConfig::default(),
@@ -1182,17 +1186,20 @@ agent_panel_scope = "current"
         assert!(default_config.ui.pane_borders);
         assert!(default_config.ui.pane_gaps);
         assert!(!default_config.ui.show_agent_labels_on_pane_borders);
+        assert!(!default_config.ui.pane_dim);
 
         let toml = r#"
 [ui]
 pane_borders = false
 pane_gaps = true
 show_agent_labels_on_pane_borders = true
+pane_dim = true
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert!(!config.ui.pane_borders);
         assert!(config.ui.pane_gaps);
         assert!(config.ui.show_agent_labels_on_pane_borders);
+        assert!(config.ui.pane_dim);
     }
 
     #[test]
