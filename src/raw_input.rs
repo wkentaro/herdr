@@ -96,7 +96,8 @@ use tokio::sync::mpsc;
 
 use crate::input::{parse_terminal_key_sequence, TerminalKey};
 use crate::terminal_theme::{
-    parse_default_color_response, DefaultColorKind, HostAppearance, RgbColor,
+    parse_default_color_response, parse_palette_color_response, DefaultColorKind, HostAppearance,
+    RgbColor,
 };
 
 const ESC: u8 = 0x1b;
@@ -114,6 +115,10 @@ pub enum RawInputEvent {
     OuterFocusLost,
     HostDefaultColor {
         kind: DefaultColorKind,
+        color: RgbColor,
+    },
+    HostPaletteColor {
+        index: u8,
         color: RgbColor,
     },
     HostColorSchemeChanged(HostAppearance),
@@ -554,6 +559,10 @@ fn extract_one_event(buffer: &[u8]) -> Option<(RawInputEvent, usize)> {
 
         if let Some((kind, color)) = parse_default_color_response(seq) {
             return Some((RawInputEvent::HostDefaultColor { kind, color }, seq_len));
+        }
+
+        if let Some((index, color)) = parse_palette_color_response(seq) {
+            return Some((RawInputEvent::HostPaletteColor { index, color }, seq_len));
         }
 
         match seq {
