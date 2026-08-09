@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## [0.8.0-fork.1] - 2026-08-09
+
+### Added
+- Added `ui.dim_unfocused_panes` to dim unfocused pane content in split layouts.
+
 ## [0.8.0] - 2026-08-03
 
 ### Added
