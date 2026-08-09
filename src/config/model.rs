@@ -820,6 +820,8 @@ pub struct UiConfig {
     pub pane_gaps: bool,
     /// Show agent labels in split pane borders when no manual pane label is set. Default: false.
     pub show_agent_labels_on_pane_borders: bool,
+    /// Dim unfocused pane content in split layouts. Default: false.
+    pub dim_unfocused_panes: bool,
     /// Hide the tab row when the workspace has one tab. Default: false.
     pub hide_tab_bar_when_single_tab: bool,
     /// Desktop tab row placement. Default: top.
@@ -1026,6 +1028,7 @@ impl Default for UiConfig {
             pane_scrollbars: true,
             pane_gaps: true,
             show_agent_labels_on_pane_borders: false,
+            dim_unfocused_panes: false,
             hide_tab_bar_when_single_tab: false,
             tab_bar_position: TabBarPositionConfig::Top,
             agent_panel_sort: AgentPanelSortConfig::Spaces,
@@ -1259,6 +1262,7 @@ agent_panel_scope = "current"
         assert!(default_config.ui.pane_scrollbars);
         assert!(default_config.ui.pane_gaps);
         assert!(!default_config.ui.show_agent_labels_on_pane_borders);
+        assert!(!default_config.ui.dim_unfocused_panes);
         assert!(!default_config.ui.hide_tab_bar_when_single_tab);
         assert_eq!(
             default_config.ui.tab_bar_position,
@@ -1271,6 +1275,7 @@ pane_borders = false
 pane_scrollbars = false
 pane_gaps = true
 show_agent_labels_on_pane_borders = true
+dim_unfocused_panes = true
 hide_tab_bar_when_single_tab = true
 tab_bar_position = "bottom"
 "#;
@@ -1279,6 +1284,7 @@ tab_bar_position = "bottom"
         assert!(!config.ui.pane_scrollbars);
         assert!(config.ui.pane_gaps);
         assert!(config.ui.show_agent_labels_on_pane_borders);
+        assert!(config.ui.dim_unfocused_panes);
         assert!(config.ui.hide_tab_bar_when_single_tab);
         assert_eq!(config.ui.tab_bar_position, TabBarPositionConfig::Bottom);
     }
