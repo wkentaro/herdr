@@ -60,6 +60,18 @@ pub fn git_space_metadata(cwd: &Path) -> Option<GitSpaceMetadata> {
     Some(git_space_metadata_from_info(&info))
 }
 
+pub(crate) fn find_primary_worktree_root(cwd: &Path) -> Option<PathBuf> {
+    let linked = git_worktree_info(cwd)?;
+    if !linked.is_linked_worktree || linked.git_common_dir.file_name()? != ".git" {
+        return None;
+    }
+
+    let candidate = linked.git_common_dir.parent()?;
+    let primary = git_worktree_info(candidate)?;
+    (!primary.is_linked_worktree && primary.git_common_dir == linked.git_common_dir)
+        .then_some(primary.repo_root)
+}
+
 pub(crate) fn automatic_workspace_label(cwd: &Path, repo_root: &Path) -> String {
     repo_root
         .file_name()
@@ -506,6 +518,33 @@ mod tests {
         );
 
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn find_primary_worktree_root_resolves_linked_checkout() {
+        let (base, repo, checkout) =
+            crate::workspace::git::test_support::create_repo_with_linked_worktree(
+                "primary-worktree-root",
+            );
+
+        assert_eq!(
+            find_primary_worktree_root(&checkout),
+            Some(canonicalize_best_effort_path(&repo))
+        );
+
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn find_primary_worktree_root_skips_bare_repository() {
+        let (base, _bare, checkout) =
+            crate::workspace::git::test_support::create_bare_repo_with_linked_worktree(
+                "bare-primary-worktree-root",
+            );
+
+        assert_eq!(find_primary_worktree_root(&checkout), None);
+
+        std::fs::remove_dir_all(base).unwrap();
     }
 
     #[test]

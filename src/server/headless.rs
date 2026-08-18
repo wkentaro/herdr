@@ -5151,6 +5151,21 @@ fn seed_startup_workspace_if_empty(app: &mut app::App) {
         return;
     }
 
+    seed_startup_workspace(app, cwd);
+}
+
+fn seed_startup_workspace(app: &mut app::App, cwd: PathBuf) {
+    if let Some(primary_cwd) = crate::workspace::find_primary_worktree_root(&cwd) {
+        match app.create_workspace_with_options(primary_cwd.clone(), false) {
+            Ok(_) => {
+                info!(cwd = %primary_cwd.display(), "created primary worktree workspace");
+            }
+            Err(err) => {
+                warn!(cwd = %primary_cwd.display(), err = %err, "failed to create primary worktree workspace");
+            }
+        }
+    }
+
     match app.create_workspace_with_options(cwd.clone(), true) {
         Ok(_) => {
             info!(cwd = %cwd.display(), "created startup workspace");
@@ -5418,6 +5433,44 @@ mod tests {
         for (_, runtime) in server.app.terminal_runtimes.drain() {
             runtime.shutdown();
         }
+    }
+
+    #[tokio::test]
+    async fn startup_from_linked_worktree_opens_primary_checkout_as_parent() {
+        let (base, primary, linked) =
+            crate::workspace::create_repo_with_linked_worktree("startup-parent");
+
+        let config = crate::config::Config::default();
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app =
+            crate::app::App::new(&config, true, None, api_rx, crate::api::EventHub::default());
+
+        seed_startup_workspace(&mut app, linked.clone());
+
+        assert_eq!(app.state.workspaces.len(), 2);
+        assert_eq!(
+            app.state.workspaces[0].identity_cwd,
+            std::fs::canonicalize(primary).unwrap()
+        );
+        assert_eq!(app.state.workspaces[1].identity_cwd, linked);
+        assert_eq!(app.state.active, Some(1));
+        assert_eq!(app.state.selected, 1);
+        assert!(
+            !app.state.workspaces[0]
+                .space_group()
+                .unwrap()
+                .is_linked_worktree
+        );
+        assert!(
+            app.state.workspaces[1]
+                .space_group()
+                .unwrap()
+                .is_linked_worktree
+        );
+        for (_, runtime) in app.terminal_runtimes.drain() {
+            runtime.shutdown();
+        }
+        std::fs::remove_dir_all(base).unwrap();
     }
 
     fn read_server_message(bytes: Vec<u8>) -> ServerMessage {

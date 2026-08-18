@@ -2457,6 +2457,63 @@ mod tests {
         assert!(app.render_dirty.is_pending());
     }
 
+    #[tokio::test]
+    async fn git_status_event_opens_missing_primary_checkout_for_linked_worktree() {
+        let (base, primary, linked) =
+            crate::workspace::create_repo_with_linked_worktree("cwd-parent");
+        let mut app = test_app();
+        app.state.workspaces = vec![Workspace::test_new("linked")];
+        app.state.ensure_test_terminals();
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        let workspace_id = app.state.workspaces[0].id.clone();
+        let root_pane = app.state.workspaces[0].tabs[0].root_pane;
+        let terminal_id = app.state.workspaces[0]
+            .terminal_id(root_pane)
+            .cloned()
+            .unwrap();
+        app.state.terminals.get_mut(&terminal_id).unwrap().cwd = linked.clone();
+        let space = crate::workspace::git_space_metadata(&linked).unwrap();
+        let status_key = crate::workspace::git_status_cache_key(&linked).unwrap();
+        let result = crate::workspace::WorkspaceGitStatus {
+            workspace_id,
+            resolved_identity_cwd: linked.clone(),
+            status_cache_key: status_key,
+            demand: crate::workspace::GitStatusRefreshDemand::default(),
+            auto_label: "linked".into(),
+            branch: None,
+            ahead_behind: None,
+            space: Some(space),
+        };
+
+        app.handle_internal_event_with_prefix_sync(AppEvent::GitStatusRefreshed {
+            results: vec![result.clone()],
+            cache_updates: Vec::new(),
+        });
+        app.handle_internal_event_with_prefix_sync(AppEvent::GitStatusRefreshed {
+            results: vec![result],
+            cache_updates: Vec::new(),
+        });
+
+        let workspace_count = app.state.workspaces.len();
+        let active = app.state.active;
+        let expected_parent_cwd = std::fs::canonicalize(primary).unwrap();
+        let parent_cwd = app
+            .state
+            .workspaces
+            .get(1)
+            .map(|workspace| workspace.identity_cwd.clone());
+        for (_, runtime) in app.terminal_runtimes.drain() {
+            runtime.shutdown();
+        }
+        std::fs::remove_dir_all(base).unwrap();
+
+        assert_eq!(workspace_count, 2);
+        assert_eq!(active, Some(0));
+        assert_eq!(parent_cwd, Some(expected_parent_cwd));
+    }
+
     #[test]
     fn clipboard_write_event_shows_feedback_toast() {
         let mut app = test_app();

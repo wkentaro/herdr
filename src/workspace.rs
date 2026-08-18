@@ -22,13 +22,18 @@ mod tab;
 #[cfg(test)]
 use self::git::git_ahead_behind;
 use self::git::git_status_cache_key_for_space;
-pub(crate) use self::{git::git_status_snapshot_for_cwd_with_demand, tab::MovedPane};
+#[cfg(test)]
+pub(crate) use self::git::test_support::create_repo_with_linked_worktree;
 pub use self::{
     git::{
         derive_label_from_cwd, fallback_label_from_cwd, git_branch, git_space_metadata,
         git_status_cache_key, GitSpaceMetadata, GitStatusCacheEntry, GitStatusRefreshDemand,
     },
     tab::{NewPane, Tab},
+};
+pub(crate) use self::{
+    git::{find_primary_worktree_root, git_status_snapshot_for_cwd_with_demand},
+    tab::MovedPane,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
