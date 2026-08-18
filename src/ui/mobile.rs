@@ -7,9 +7,8 @@ use ratatui::{
 };
 
 use super::sidebar::{
-    agent_panel_entries, agent_panel_entries_from, grouped_child_display_label,
-    next_entry_is_indented_workspace, workspace_list_entries_expanded, AgentPanelEntry,
-    WorkspaceListEntry,
+    agent_panel_entries, agent_panel_entries_from, next_entry_is_indented_workspace,
+    workspace_list_entries_expanded, AgentPanelEntry, WorkspaceListEntry,
 };
 use super::status::{state_icon, state_icon_symbol};
 use super::text::{display_width_u16, truncate_end};
@@ -620,16 +619,7 @@ fn render_mobile_switcher_content(
 
         title_spans.push(Span::styled(dot, dot_style.bg(bg)));
         title_spans.push(Span::styled(" ", Style::default().bg(bg)));
-        let raw_label = ws.display_name_from(&app.terminals, terminal_runtimes);
-        let name = if *indented {
-            grouped_child_display_label(
-                &raw_label,
-                ws.branch().as_deref(),
-                ws.custom_name.is_some(),
-            )
-        } else {
-            raw_label
-        };
+        let name = ws.display_name_from(&app.terminals, terminal_runtimes);
         let name_budget = content.width.saturating_sub(if *indented { 8 } else { 5 }) as usize;
         title_spans.push(Span::styled(
             truncate_end(&name, name_budget),
