@@ -40,6 +40,12 @@ pub struct WorktreeSpaceMembership {
     pub is_linked_worktree: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpaceGroup<'a> {
+    pub key: &'a str,
+    pub is_linked_worktree: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceGitStatus {
     pub workspace_id: String,
@@ -1194,6 +1200,23 @@ impl Workspace {
 
     pub fn worktree_space(&self) -> Option<&WorktreeSpaceMembership> {
         self.worktree_space.as_ref()
+    }
+
+    /// Sidebar grouping identity. Herdr-recorded worktree provenance wins, and
+    /// otherwise the repo discovered from the workspace cwd, so checkouts Herdr
+    /// never opened itself still group with their siblings.
+    pub fn space_group(&self) -> Option<SpaceGroup<'_>> {
+        if let Some(space) = self.worktree_space.as_ref() {
+            return Some(SpaceGroup {
+                key: &space.key,
+                is_linked_worktree: space.is_linked_worktree,
+            });
+        }
+        let space = self.cached_git_space.as_ref()?;
+        Some(SpaceGroup {
+            key: &space.key,
+            is_linked_worktree: space.is_linked_worktree,
+        })
     }
 
     #[cfg(test)]
