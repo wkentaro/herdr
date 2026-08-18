@@ -73,6 +73,10 @@ pub struct Version {
 impl Version {
     pub fn parse(s: &str) -> Option<Self> {
         let s = s.strip_prefix('v').unwrap_or(s);
+        // Fork builds carry a prerelease suffix such as `0.8.0-fork.1`. Compare
+        // them as their base release instead of refusing to parse, which would
+        // panic every caller of `current()`.
+        let s = s.split(['-', '+']).next()?;
         let parts: Vec<&str> = s.split('.').collect();
         if parts.len() != 3 {
             return None;
@@ -2359,6 +2363,18 @@ mod tests {
             Some(Version {
                 major: 0,
                 minor: 1,
+                patch: 0
+            })
+        );
+    }
+
+    #[test]
+    fn parse_version_with_prerelease_suffix() {
+        assert_eq!(
+            Version::parse("0.8.0-fork.1"),
+            Some(Version {
+                major: 0,
+                minor: 8,
                 patch: 0
             })
         );
