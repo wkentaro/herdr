@@ -33,6 +33,45 @@ struct WorkspaceGitRefreshOutput {
 }
 
 impl App {
+    pub(crate) fn open_missing_primary_worktree_workspaces(&mut self) -> bool {
+        let primary_roots = self
+            .state
+            .workspaces
+            .iter()
+            .filter(|workspace| {
+                workspace
+                    .git_space()
+                    .is_some_and(|space| space.is_linked_worktree)
+            })
+            .filter_map(|workspace| {
+                workspace.resolved_identity_cwd_from(&self.state.terminals, &self.terminal_runtimes)
+            })
+            .filter_map(|cwd| crate::workspace::find_primary_worktree_root(&cwd))
+            .collect::<Vec<_>>();
+        let mut changed = false;
+
+        for primary_root in primary_roots {
+            if self
+                .open_workspace_idx_for_checkout(&primary_root)
+                .is_some()
+            {
+                continue;
+            }
+            match self.create_workspace_with_options(primary_root.clone(), false) {
+                Ok(ws_idx) => {
+                    self.emit_workspace_open_events(ws_idx);
+                    tracing::info!(cwd = %primary_root.display(), "opened missing primary worktree workspace");
+                    changed = true;
+                }
+                Err(err) => {
+                    tracing::warn!(cwd = %primary_root.display(), err = %err, "failed to open missing primary worktree workspace");
+                }
+            }
+        }
+
+        changed
+    }
+
     pub(crate) fn start_git_status_refresh_if_due(&mut self, now: Instant) {
         let Some(deadline) = self.git_refresh_deadline() else {
             return;

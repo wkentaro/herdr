@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- Entering a linked Git worktree in a space's root pane now opens the primary checkout as its parent space while keeping the linked worktree focused.
+
 ## [0.8.0] - 2026-08-03
 
 ### Added
