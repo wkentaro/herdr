@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## [0.8.0-fork.2] - 2026-08-18
+
+### Changed
+- Spaces now group under the repository they belong to, so worktrees created outside Herdr and several spaces on one checkout share a single group.
+- Grouped rows now show their checkout name alongside the branch and ahead/behind counts instead of replacing the name with the branch.
+
+### Fixed
+- Fixed a panic on builds whose version carries a prerelease suffix, which killed the server whenever a plugin manifest was loaded.
+
 ## [0.8.0-fork.1] - 2026-08-09
 
 ### Added
