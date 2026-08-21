@@ -666,6 +666,7 @@ fn session_snapshot_request_and_response_round_trip() {
             snapshot: Box::new(SessionSnapshot {
                 version: "0.1.2".into(),
                 protocol: 16,
+                name: Some("review".into()),
                 focused_workspace_id: None,
                 focused_tab_id: None,
                 focused_pane_id: None,
@@ -679,6 +680,7 @@ fn session_snapshot_request_and_response_round_trip() {
     };
     let json = serde_json::to_string(&response).unwrap();
     assert!(json.contains("\"type\":\"session_snapshot\""));
+    assert!(json.contains("\"name\":\"review\""));
     let restored: SuccessResponse = serde_json::from_str(&json).unwrap();
     assert_eq!(restored, response);
 }

@@ -116,10 +116,11 @@ Raw socket method names use dot notation:
 `workspace.move_block` atomically moves the ordered `workspace_ids` before `before_workspace_id`; omit the anchor to move the block to the end. The ids must be unique and the anchor cannot be part of the block. The response contains the authoritative ordered workspace list.
 
 `session.snapshot` returns a one-time bootstrap snapshot for clients that keep
-their own local runtime cache. The response includes version/protocol metadata,
-focused workspace/tab/pane ids, workspace records, tab records, pane records,
-tab layout snapshots, and agent records. It is not a subscription; after reading
-it, subscribe to resource events and update the local cache from those events.
+their own local runtime cache. The response includes the session name,
+version/protocol metadata, focused workspace/tab/pane ids, workspace records,
+tab records, pane records, tab layout snapshots, and agent records. It is not a
+subscription; after reading it, subscribe to resource events and update the
+local cache from those events.
 Call `session.snapshot` again after reconnecting or when the local cache may be
 stale. Attached worktree provenance is included on workspace records. Full repo
 worktree discovery remains `worktree.list`.
