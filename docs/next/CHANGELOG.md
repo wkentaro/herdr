@@ -2,9 +2,29 @@
 
 ## Unreleased
 
-### Changed
+## [0.8.0-fork.4] - 2026-08-21
 
+### Changed
+- The expanded sidebar header now shows the active session name, and session snapshots expose it as `name`.
+
+## [0.8.0-fork.3] - 2026-08-18
+
+### Changed
 - Entering a linked Git worktree in a space's root pane now opens the primary checkout as its parent space while keeping the linked worktree focused.
+
+## [0.8.0-fork.2] - 2026-08-18
+
+### Changed
+- Spaces now group under the repository they belong to, so worktrees created outside Herdr and several spaces on one checkout share a single group.
+- Grouped rows now show their checkout name alongside the branch and ahead/behind counts instead of replacing the name with the branch.
+
+### Fixed
+- Fixed a panic on builds whose version carries a prerelease suffix, which killed the server whenever a plugin manifest was loaded.
+
+## [0.8.0-fork.1] - 2026-08-09
+
+### Added
+- Added `ui.dim_unfocused_panes` to dim unfocused pane content in split layouts.
 
 ## [0.8.0] - 2026-08-03
 

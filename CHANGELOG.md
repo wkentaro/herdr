@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## [0.8.0-fork.4] - 2026-08-21
+
+### Changed
+- The expanded sidebar header now shows the active session name, and session snapshots expose it as `name`.
+
 ## [0.8.0-fork.3] - 2026-08-18
 
 ### Changed
