@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## [0.8.0-fork.5] - 2026-08-21
+
+### Added
+- Added `ui.pane_outer_borders` to draw split-pane borders only between panes, leaving no frame around the terminal area. With exactly two panes the shared divider is split at its midpoint so the half on the focused pane's side is accented, matching tmux.
+
 ## [0.8.0-fork.4] - 2026-08-21
 
 ### Changed
