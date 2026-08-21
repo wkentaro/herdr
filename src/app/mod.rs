@@ -636,6 +636,7 @@ impl App {
             pane_borders: config.ui.pane_borders,
             pane_scrollbars: config.ui.pane_scrollbars,
             pane_gaps: config.ui.pane_gaps,
+            pane_outer_borders: config.ui.pane_outer_borders,
             show_agent_labels_on_pane_borders: config.ui.show_agent_labels_on_pane_borders,
             dim_unfocused_panes: config.ui.dim_unfocused_panes,
             hide_tab_bar_when_single_tab: config.ui.hide_tab_bar_when_single_tab,
@@ -1445,6 +1446,7 @@ impl App {
                 self.state.pane_borders = config.ui.pane_borders;
                 self.state.pane_scrollbars = config.ui.pane_scrollbars;
                 self.state.pane_gaps = config.ui.pane_gaps;
+                self.state.pane_outer_borders = config.ui.pane_outer_borders;
                 self.state.show_agent_labels_on_pane_borders =
                     config.ui.show_agent_labels_on_pane_borders;
                 self.state.dim_unfocused_panes = config.ui.dim_unfocused_panes;

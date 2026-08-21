@@ -818,6 +818,9 @@ pub struct UiConfig {
     pub pane_scrollbars: bool,
     /// Keep split panes visually separated instead of sharing divider borders. Default: true.
     pub pane_gaps: bool,
+    /// Draw split-pane borders along the outer edge of the terminal area. Default: true.
+    /// Ignored when `pane_gaps` is true, where every pane is its own box.
+    pub pane_outer_borders: bool,
     /// Show agent labels in split pane borders when no manual pane label is set. Default: false.
     pub show_agent_labels_on_pane_borders: bool,
     /// Dim unfocused pane content in split layouts. Default: false.
@@ -1027,6 +1030,7 @@ impl Default for UiConfig {
             pane_borders: true,
             pane_scrollbars: true,
             pane_gaps: true,
+            pane_outer_borders: true,
             show_agent_labels_on_pane_borders: false,
             dim_unfocused_panes: false,
             hide_tab_bar_when_single_tab: false,
@@ -1261,6 +1265,7 @@ agent_panel_scope = "current"
         assert!(default_config.ui.pane_borders);
         assert!(default_config.ui.pane_scrollbars);
         assert!(default_config.ui.pane_gaps);
+        assert!(default_config.ui.pane_outer_borders);
         assert!(!default_config.ui.show_agent_labels_on_pane_borders);
         assert!(!default_config.ui.dim_unfocused_panes);
         assert!(!default_config.ui.hide_tab_bar_when_single_tab);
@@ -1274,6 +1279,7 @@ agent_panel_scope = "current"
 pane_borders = false
 pane_scrollbars = false
 pane_gaps = true
+pane_outer_borders = false
 show_agent_labels_on_pane_borders = true
 dim_unfocused_panes = true
 hide_tab_bar_when_single_tab = true
@@ -1283,6 +1289,7 @@ tab_bar_position = "bottom"
         assert!(!config.ui.pane_borders);
         assert!(!config.ui.pane_scrollbars);
         assert!(config.ui.pane_gaps);
+        assert!(!config.ui.pane_outer_borders);
         assert!(config.ui.show_agent_labels_on_pane_borders);
         assert!(config.ui.dim_unfocused_panes);
         assert!(config.ui.hide_tab_bar_when_single_tab);

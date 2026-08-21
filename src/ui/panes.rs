@@ -70,6 +70,27 @@ fn pane_to_right<'a>(info: &PaneInfo, panes: &'a [PaneInfo]) -> Option<&'a PaneI
     })
 }
 
+fn pane_to_left<'a>(info: &PaneInfo, panes: &'a [PaneInfo]) -> Option<&'a PaneInfo> {
+    panes.iter().find(|other| {
+        other.id != info.id
+            && other.rect.x.saturating_add(other.rect.width) == info.rect.x
+            && ranges_overlap(
+                info.rect.y,
+                info.rect.height,
+                other.rect.y,
+                other.rect.height,
+            )
+    })
+}
+
+fn pane_above<'a>(info: &PaneInfo, panes: &'a [PaneInfo]) -> Option<&'a PaneInfo> {
+    panes.iter().find(|other| {
+        other.id != info.id
+            && other.rect.y.saturating_add(other.rect.height) == info.rect.y
+            && ranges_overlap(info.rect.x, info.rect.width, other.rect.x, other.rect.width)
+    })
+}
+
 fn pane_below<'a>(info: &PaneInfo, panes: &'a [PaneInfo]) -> Option<&'a PaneInfo> {
     let bottom = info.rect.y.saturating_add(info.rect.height);
     panes.iter().find(|other| {
@@ -87,10 +108,20 @@ fn shrink_for_one_cell_gap(size: u16) -> u16 {
     }
 }
 
+/// Borders drawn around a zoomed pane, which fills the whole terminal area.
+fn zoomed_pane_borders(app: &AppState, multi_pane: bool) -> Borders {
+    if multi_pane && app.pane_borders && (app.pane_gaps || app.pane_outer_borders) {
+        Borders::ALL
+    } else {
+        Borders::NONE
+    }
+}
+
 pub(crate) fn apply_pane_chrome(
     panes: Vec<PaneInfo>,
     pane_borders: bool,
     pane_gaps: bool,
+    pane_outer_borders: bool,
 ) -> Vec<PaneInfo> {
     let multi_pane = panes.len() > 1;
     panes
@@ -119,6 +150,19 @@ pub(crate) fn apply_pane_chrome(
                     }
                     if below_neighbor.is_some() {
                         borders.remove(Borders::BOTTOM);
+                    }
+                    if !pane_outer_borders {
+                        // Shared dividers live in the first column/row of the pane that
+                        // follows them, so keeping only those edges leaves dividers
+                        // between panes and nothing along the outer edge.
+                        borders.remove(Borders::RIGHT);
+                        borders.remove(Borders::BOTTOM);
+                        if pane_to_left(&info, &panes).is_none() {
+                            borders.remove(Borders::LEFT);
+                        }
+                        if pane_above(&info, &panes).is_none() {
+                            borders.remove(Borders::TOP);
+                        }
                     }
                 }
                 borders
@@ -179,11 +223,7 @@ pub(super) fn resize_tab_panes(
     if tab.zoomed {
         let focused_id = tab.layout.focused();
         if let Some((terminal_id, rt)) = runtime_for_tab_pane(terminal_runtimes, tab, focused_id) {
-            let borders = if multi_pane && app.pane_borders {
-                Borders::ALL
-            } else {
-                Borders::NONE
-            };
+            let borders = zoomed_pane_borders(app, multi_pane);
             let pane_inner = pane_inner_rect(area, borders);
             let inner_rect = stable_terminal_inner_rect(pane_inner, app.pane_scrollbars);
             if !app.direct_attach_resize_locks.contains(terminal_id) {
@@ -198,7 +238,12 @@ pub(super) fn resize_tab_panes(
         return;
     }
 
-    for info in apply_pane_chrome(tab.layout.panes(area), app.pane_borders, app.pane_gaps) {
+    for info in apply_pane_chrome(
+        tab.layout.panes(area),
+        app.pane_borders,
+        app.pane_gaps,
+        app.pane_outer_borders,
+    ) {
         let pane_inner = pane_inner_rect(info.rect, info.borders);
 
         if let Some((terminal_id, rt)) = runtime_for_tab_pane(terminal_runtimes, tab, info.id) {
@@ -234,11 +279,7 @@ pub(super) fn compute_pane_infos(
 
     if ws.zoomed {
         let focused_id = ws.layout.focused();
-        let borders = if multi_pane && app.pane_borders {
-            Borders::ALL
-        } else {
-            Borders::NONE
-        };
+        let borders = zoomed_pane_borders(app, multi_pane);
         let pane_inner = pane_inner_rect(area, borders);
         let mut inner_rect = pane_inner;
         let mut scrollbar_rect = None;
@@ -268,7 +309,12 @@ pub(super) fn compute_pane_infos(
         }];
     }
 
-    let mut pane_infos = apply_pane_chrome(ws.layout.panes(area), app.pane_borders, app.pane_gaps);
+    let mut pane_infos = apply_pane_chrome(
+        ws.layout.panes(area),
+        app.pane_borders,
+        app.pane_gaps,
+        app.pane_outer_borders,
+    );
 
     for info in &mut pane_infos {
         let pane_inner = pane_inner_rect(info.rect, info.borders);
@@ -1055,6 +1101,7 @@ mod tests {
             workspace.tabs[0].layout.panes(Rect::new(0, 0, 100, 20)),
             true,
             false,
+            true,
         );
         let left = infos.iter().find(|info| info.id == root).unwrap();
         let right = infos.iter().find(|info| info.id == right).unwrap();
@@ -1075,6 +1122,7 @@ mod tests {
             workspace.tabs[0].layout.panes(Rect::new(0, 0, 100, 20)),
             true,
             false,
+            true,
         );
         let top = infos.iter().find(|info| info.id == root).unwrap();
         let bottom = infos.iter().find(|info| info.id == bottom).unwrap();
@@ -1082,6 +1130,50 @@ mod tests {
         assert_eq!(top.rect.y + top.rect.height, bottom.rect.y);
         assert!(!top.borders.contains(Borders::BOTTOM));
         assert!(bottom.borders.contains(Borders::TOP));
+    }
+
+    #[test]
+    fn outer_borders_disabled_keeps_only_the_shared_divider() {
+        let mut workspace = Workspace::test_new("test");
+        let root = workspace.tabs[0].root_pane;
+        let right = workspace.test_split(ratatui::layout::Direction::Horizontal);
+        workspace.tabs[0].layout.focus_pane(root);
+
+        let infos = apply_pane_chrome(
+            workspace.tabs[0].layout.panes(Rect::new(0, 0, 100, 20)),
+            true,
+            false,
+            false,
+        );
+        let left = infos.iter().find(|info| info.id == root).unwrap();
+        let right = infos.iter().find(|info| info.id == right).unwrap();
+
+        assert!(left.borders.is_empty());
+        assert_eq!(right.borders, Borders::LEFT);
+        assert_eq!(pane_inner_rect(left.rect, left.borders), left.rect);
+    }
+
+    #[test]
+    fn outer_borders_disabled_keeps_dividers_in_nested_splits() {
+        let mut workspace = Workspace::test_new("test");
+        let root = workspace.tabs[0].root_pane;
+        let bottom = workspace.test_split(ratatui::layout::Direction::Vertical);
+        workspace.tabs[0].layout.focus_pane(bottom);
+        let bottom_right = workspace.test_split(ratatui::layout::Direction::Horizontal);
+
+        let infos = apply_pane_chrome(
+            workspace.tabs[0].layout.panes(Rect::new(0, 0, 100, 20)),
+            true,
+            false,
+            false,
+        );
+        let top = infos.iter().find(|info| info.id == root).unwrap();
+        let bottom = infos.iter().find(|info| info.id == bottom).unwrap();
+        let bottom_right = infos.iter().find(|info| info.id == bottom_right).unwrap();
+
+        assert!(top.borders.is_empty());
+        assert_eq!(bottom.borders, Borders::TOP);
+        assert_eq!(bottom_right.borders, Borders::TOP | Borders::LEFT);
     }
 
     #[test]
@@ -1093,6 +1185,7 @@ mod tests {
 
         let infos = apply_pane_chrome(
             workspace.tabs[0].layout.panes(Rect::new(0, 0, 100, 20)),
+            true,
             true,
             true,
         );
@@ -1115,6 +1208,7 @@ mod tests {
             workspace.tabs[0].layout.panes(Rect::new(0, 0, 100, 20)),
             false,
             true,
+            true,
         );
         let left = infos.iter().find(|info| info.id == root).unwrap();
         let right = infos.iter().find(|info| info.id == right).unwrap();
@@ -1134,6 +1228,7 @@ mod tests {
             workspace.tabs[0].layout.panes(Rect::new(0, 0, 100, 20)),
             false,
             false,
+            true,
         );
 
         for info in infos {

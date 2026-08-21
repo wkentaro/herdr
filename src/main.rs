@@ -312,6 +312,10 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # Keep split panes visually separated instead of sharing divider borders.
 # pane_gaps = true
 
+# Draw split-pane borders along the outer edge of the terminal area.
+# Set false with pane_gaps = false for tmux-style dividers between panes only.
+# pane_outer_borders = true
+
 # Show detected/reported agent labels in split pane borders when no manual pane name is set.
 # show_agent_labels_on_pane_borders = false
 
