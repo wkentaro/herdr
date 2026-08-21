@@ -302,9 +302,17 @@ mod tests {
         assert!(!app.view.split_borders.is_empty());
         assert!(frame.cursor.is_some());
         assert_eq!(frame.hyperlinks, vec![uri.to_owned()]);
+        let header_text = frame
+            .cells
+            .iter()
+            .take(frame.width as usize)
+            .map(|cell| cell.symbol.as_str())
+            .collect::<String>();
+        assert!(header_text.starts_with(" spaces"));
+        assert!(header_text.contains("default"));
         assert_eq!(
             frame_digest(&frame),
-            "a7c21fa42305a41231c7ae254f264f6ef923f46301d8fc4cd35ab6dfdd651b6b"
+            "28f25b3b6c9b9715987a2953fea8b7be0af247a180a7894a9cf803f98b9db02a"
         );
     }
 

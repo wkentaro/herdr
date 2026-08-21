@@ -1203,13 +1203,36 @@ fn render_workspace_list(
 
     let list_bottom = area.y + area.height.saturating_sub(1);
     if area.height > 0 {
+        let section_label = " spaces";
         frame.render_widget(
             Paragraph::new(Line::from(vec![Span::styled(
-                " spaces",
+                section_label,
                 Style::default().fg(p.overlay0).add_modifier(Modifier::BOLD),
             )])),
             Rect::new(area.x, area.y, area.width, 1),
         );
+
+        if let Some(session_name) = app.session_name.as_deref() {
+            let label_width = display_width_u16(section_label);
+            let available_width = area.width.saturating_sub(label_width.saturating_add(1));
+            if available_width > 0 {
+                let session_width = display_width_u16(session_name).min(available_width);
+                let session_area = Rect::new(
+                    area.x + area.width.saturating_sub(session_width),
+                    area.y,
+                    session_width,
+                    1,
+                );
+                frame.render_widget(
+                    Paragraph::new(Span::styled(
+                        truncate_end(session_name, session_width as usize),
+                        Style::default().fg(p.text).add_modifier(Modifier::BOLD),
+                    ))
+                    .alignment(Alignment::Right),
+                    session_area,
+                );
+            }
+        }
     }
 
     let metrics = workspace_list_scroll_metrics(app, area);
@@ -1615,6 +1638,26 @@ mod tests {
             .content
             .iter()
             .all(|cell| cell.bg == app.palette.sidebar_bg));
+    }
+
+    #[test]
+    fn renders_session_name_in_expanded_sidebar_header() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.session_name = Some("review".into());
+        let area = Rect::new(0, 0, 20, 8);
+        let mut terminal =
+            Terminal::new(TestBackend::new(area.width, area.height)).expect("test terminal");
+
+        terminal
+            .draw(|frame| {
+                render_workspace_list(&app, &TerminalRuntimeRegistry::new(), frame, area, false)
+            })
+            .expect("sidebar should render");
+
+        assert_eq!(
+            row_text(terminal.backend().buffer(), area.y, area.width),
+            " spaces       review"
+        );
     }
 
     #[test]

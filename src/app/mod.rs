@@ -538,6 +538,10 @@ impl App {
             direct_attach_resize_locks: std::collections::HashSet::new(),
             pane_id_aliases: std::collections::HashMap::new(),
             public_pane_id_aliases: std::collections::HashMap::new(),
+            session_name: (!no_session).then(|| {
+                crate::session::active_name()
+                    .unwrap_or_else(|| crate::session::DEFAULT_SESSION_NAME.to_string())
+            }),
             workspaces,
             active,
             previous_pane_focus: None,

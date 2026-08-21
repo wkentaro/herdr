@@ -9843,6 +9843,12 @@
               },
               "type": "array"
             },
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "panes": {
               "items": {
                 "$ref": "#/schemas/success_response/$defs/PaneInfo"
