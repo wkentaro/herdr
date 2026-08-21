@@ -489,6 +489,75 @@ struct LineCell {
     right: bool,
 }
 
+/// The single divider shared by exactly two panes, and which of them is focused.
+///
+/// With no outer border, that divider touches both panes, so colouring every cell it
+/// touches says nothing about which pane is focused. tmux resolves the same ambiguity by
+/// splitting the divider in half and accenting the half on the focused pane's side.
+struct TwoPaneDivider {
+    vertical: bool,
+    pos: u16,
+    start: u16,
+    len: u16,
+    first_focused: bool,
+}
+
+impl TwoPaneDivider {
+    fn detect(pane_infos: &[PaneInfo]) -> Option<Self> {
+        let [a, b] = pane_infos else {
+            return None;
+        };
+        let (first, second) = if (a.rect.x, a.rect.y) <= (b.rect.x, b.rect.y) {
+            (a, b)
+        } else {
+            (b, a)
+        };
+
+        let side_by_side = first.rect.x.saturating_add(first.rect.width) == second.rect.x
+            && first.rect.y == second.rect.y
+            && first.rect.height == second.rect.height;
+        let stacked = first.rect.y.saturating_add(first.rect.height) == second.rect.y
+            && first.rect.x == second.rect.x
+            && first.rect.width == second.rect.width;
+
+        let divider = if side_by_side {
+            Self {
+                vertical: true,
+                pos: second.rect.x,
+                start: second.rect.y,
+                len: second.rect.height,
+                first_focused: first.is_focused,
+            }
+        } else if stacked {
+            Self {
+                vertical: false,
+                pos: second.rect.y,
+                start: second.rect.x,
+                len: second.rect.width,
+                first_focused: first.is_focused,
+            }
+        } else {
+            return None;
+        };
+
+        (divider.len > 0).then_some(divider)
+    }
+
+    /// Whether this cell should use the focused colour, or `None` when it is not on the divider.
+    fn is_focused_cell(&self, x: u16, y: u16) -> Option<bool> {
+        let (along, across) = if self.vertical { (y, x) } else { (x, y) };
+        if across != self.pos || along < self.start {
+            return None;
+        }
+        let offset = along - self.start;
+        if offset >= self.len {
+            return None;
+        }
+        let in_first_half = offset <= self.len / 2;
+        Some(in_first_half == self.first_focused)
+    }
+}
+
 fn render_pane_borders(
     app: &AppState,
     ws: &crate::workspace::Workspace,
@@ -506,6 +575,12 @@ fn render_pane_borders(
     }
     add_split_border_cells(app.pane_gaps, split_borders, &mut cells);
 
+    // Only the borderless-outer layout loses the focus signal; every other layout still
+    // has an edge that belongs to the focused pane alone.
+    let two_pane_divider = (!app.pane_gaps && !app.pane_outer_borders)
+        .then(|| TwoPaneDivider::detect(pane_infos))
+        .flatten();
+
     let buf = frame.buffer_mut();
     let area = buf.area;
     for ((x, y), line) in cells {
@@ -516,9 +591,14 @@ fn render_pane_borders(
         {
             continue;
         }
-        let focused = pane_infos
-            .iter()
-            .any(|info| info.is_focused && line_touches_pane(x, y, info, app.pane_gaps));
+        let focused = two_pane_divider
+            .as_ref()
+            .and_then(|divider| divider.is_focused_cell(x, y))
+            .unwrap_or_else(|| {
+                pane_infos
+                    .iter()
+                    .any(|info| info.is_focused && line_touches_pane(x, y, info, app.pane_gaps))
+            });
         let symbol = line_cell_symbol(line);
         if symbol.is_empty() {
             continue;
@@ -1130,6 +1210,82 @@ mod tests {
         assert_eq!(top.rect.y + top.rect.height, bottom.rect.y);
         assert!(!top.borders.contains(Borders::BOTTOM));
         assert!(bottom.borders.contains(Borders::TOP));
+    }
+
+    /// Colours of the divider column, top to bottom, as 'A' (focused) or '.' (unfocused).
+    fn divider_focus_column(focused_left: bool, width: u16, height: u16) -> String {
+        let area = Rect::new(0, 0, width, height);
+        let mut app = AppState::test_new();
+        app.mode = Mode::Terminal;
+        app.pane_borders = true;
+        app.pane_gaps = false;
+        app.pane_outer_borders = false;
+        app.view.terminal_area = area;
+
+        let mut ws = Workspace::test_new("test");
+        let root = ws.tabs[0].root_pane;
+        let right = ws.test_split(ratatui::layout::Direction::Horizontal);
+        ws.tabs[0]
+            .layout
+            .focus_pane(if focused_left { root } else { right });
+
+        app.view.split_borders = ws.tabs[0].layout.splits(area);
+        app.view.pane_infos = apply_pane_chrome(
+            ws.tabs[0].layout.panes(area),
+            app.pane_borders,
+            app.pane_gaps,
+            app.pane_outer_borders,
+        );
+        let divider_x = app
+            .view
+            .pane_infos
+            .iter()
+            .find(|info| info.id == right)
+            .unwrap()
+            .rect
+            .x;
+
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| render_view_pane_borders(&app, &ws, frame))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        (0..height)
+            .map(|y| {
+                let cell = &buffer[(divider_x, y)];
+                if cell.fg == app.palette.accent {
+                    'A'
+                } else if cell.fg == app.palette.overlay0 {
+                    '.'
+                } else {
+                    '?'
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn two_pane_divider_splits_focus_colour_in_half() {
+        // tmux accents the first half of a two-pane divider for the left pane and the
+        // second half for the right, splitting a 23-row divider after 12 rows.
+        assert_eq!(
+            divider_focus_column(true, 60, 23),
+            "AAAAAAAAAAAA..........."
+        );
+        assert_eq!(
+            divider_focus_column(false, 60, 23),
+            "............AAAAAAAAAAA"
+        );
+    }
+
+    #[test]
+    fn two_pane_divider_split_is_independent_of_pane_widths() {
+        let even = divider_focus_column(true, 60, 23);
+        let uneven = divider_focus_column(true, 80, 23);
+
+        assert_eq!(even, uneven);
     }
 
     #[test]
