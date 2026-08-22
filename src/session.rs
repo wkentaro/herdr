@@ -1,5 +1,7 @@
+use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
@@ -14,6 +16,7 @@ const MAX_SESSION_NAME_LEN: usize = 64;
 const STOP_WAIT_TIMEOUT: Duration = Duration::from_secs(15);
 const STOP_WAIT_POLL: Duration = Duration::from_millis(25);
 const MIN_SOCKET_TIMEOUT: Duration = Duration::from_millis(1);
+const KILL_PENDING_FILE: &str = ".kill-pending";
 
 static EXPLICIT_SESSION_REQUESTED: AtomicBool = AtomicBool::new(false);
 
@@ -314,6 +317,69 @@ pub fn delete_session(name: &str) -> Result<SessionInfo, String> {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(info),
         Err(err) => Err(err.to_string()),
     }
+}
+
+pub fn kill_session(name: &str) -> Result<SessionInfo, String> {
+    if name == DEFAULT_SESSION_NAME {
+        return Err("killing the default session is not supported".to_string());
+    }
+    validate_name(name)?;
+
+    let dir = data_dir_for(Some(name));
+    std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+    let marker = dir.join(KILL_PENDING_FILE);
+    match OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&marker)
+    {
+        Ok(_) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+            return Err(format!("session {name} is already being killed"));
+        }
+        Err(err) => return Err(err.to_string()),
+    }
+
+    if is_running_at(&api_socket_path_for(Some(name))) {
+        if let Err(err) = stop_session(Some(name)) {
+            let _ = std::fs::remove_file(&marker);
+            return Err(err);
+        }
+    }
+
+    // The marker stays in place on deletion failure so a racing attach cannot
+    // recreate a session whose previous lifecycle has not finished cleanly.
+    delete_session(name)
+}
+
+pub fn ensure_session_start_allowed() -> Result<(), String> {
+    let Some(name) = active_name() else {
+        return Ok(());
+    };
+    if data_dir_for(Some(&name)).join(KILL_PENDING_FILE).exists() {
+        return Err(format!(
+            "session {name} is being killed; wait for deletion to finish"
+        ));
+    }
+    Ok(())
+}
+
+pub fn spawn_kill_session(name: &str) -> Result<u32, String> {
+    if name == DEFAULT_SESSION_NAME {
+        return Err("killing the default session is not supported".to_string());
+    }
+    validate_name(name)?;
+    let exe = std::env::current_exe()
+        .map_err(|err| format!("failed to determine herdr executable path: {err}"))?;
+    let mut command = Command::new(exe);
+    command
+        .args(["session", "kill", name])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    crate::platform::detach_server_daemon_command(&mut command);
+    crate::platform::launch_server_daemon_command(&mut command)
+        .map_err(|err| format!("failed to start session kill helper: {err}"))
 }
 
 fn send_stop_request(
@@ -1031,6 +1097,48 @@ mod tests {
     #[test]
     fn delete_default_session_is_rejected() {
         assert!(delete_session(DEFAULT_SESSION_NAME).is_err());
+    }
+
+    #[test]
+    fn kill_default_session_is_rejected() {
+        assert!(kill_session(DEFAULT_SESSION_NAME).is_err());
+    }
+
+    #[test]
+    fn kill_stopped_session_deletes_its_data() {
+        let _guard = env_lock().lock().unwrap();
+        let config_home =
+            std::env::temp_dir().join(format!("herdr-session-kill-{}", std::process::id()));
+        std::env::set_var("XDG_CONFIG_HOME", &config_home);
+        let dir = data_dir_for(Some("review"));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("session.json"), "saved").unwrap();
+
+        let killed = kill_session("review").unwrap();
+
+        assert_eq!(killed.name, "review");
+        assert!(!dir.exists());
+        let _ = std::fs::remove_dir_all(&config_home);
+        std::env::remove_var("XDG_CONFIG_HOME");
+    }
+
+    #[test]
+    fn kill_marker_blocks_session_restart() {
+        let _guard = env_lock().lock().unwrap();
+        let config_home =
+            std::env::temp_dir().join(format!("herdr-kill-marker-{}", std::process::id()));
+        std::env::set_var("XDG_CONFIG_HOME", &config_home);
+        std::env::set_var(SESSION_ENV_VAR, "review");
+        let dir = data_dir_for(Some("review"));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(KILL_PENDING_FILE), "").unwrap();
+
+        let err = ensure_session_start_allowed().unwrap_err();
+
+        assert!(err.contains("being killed"), "{err}");
+        let _ = std::fs::remove_dir_all(&config_home);
+        std::env::remove_var("XDG_CONFIG_HOME");
+        std::env::remove_var(SESSION_ENV_VAR);
     }
 
     #[test]

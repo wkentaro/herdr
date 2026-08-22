@@ -108,6 +108,7 @@ impl App {
                 Mode::ConfirmRemoveWorktree => self.handle_worktree_remove_key(key_event),
                 Mode::Resize => self.handle_resize_key_via_api(key),
                 Mode::ConfirmClose => self.handle_confirm_close_key_via_api(key_event),
+                Mode::ConfirmKillSession => self.handle_confirm_kill_session_key_via_api(key_event),
                 Mode::ContextMenu => {
                     self.handle_context_menu_key_via_api(key_event);
                 }
@@ -443,6 +444,9 @@ impl App {
                         self.apply_rename_mouse_action_via_api(action)
                     }
                     MouseAction::ConfirmCloseAccept => self.confirm_close_accept_via_api(),
+                    MouseAction::ConfirmKillSessionAccept => {
+                        self.confirm_kill_session_accept_via_api()
+                    }
                     MouseAction::ContextMenu { menu, idx } => {
                         self.apply_context_menu_action_via_api(menu, idx)
                     }

@@ -783,6 +783,105 @@ pub(crate) fn confirm_close_button_rects(inner: Rect) -> (Rect, Rect) {
     (rects[0], rects[1])
 }
 
+pub(super) fn render_confirm_kill_session_overlay(app: &AppState, frame: &mut Frame, area: Rect) {
+    let Some(name) = app
+        .session_name
+        .as_deref()
+        .filter(|name| *name != crate::session::DEFAULT_SESSION_NAME)
+    else {
+        return;
+    };
+
+    super::dim_background(frame, area);
+    let Some(popup) = confirm_kill_session_popup_rect(area) else {
+        return;
+    };
+    let Some(inner) = render_panel_shell(frame, popup, app.palette.red, app.palette.panel_bg)
+    else {
+        return;
+    };
+
+    let warning = Style::default()
+        .fg(app.palette.red)
+        .add_modifier(Modifier::BOLD);
+    let text = Style::default().fg(app.palette.text);
+    let dim = Style::default().fg(app.palette.overlay0);
+    let rows = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+    ])
+    .areas::<6>(inner);
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            format!(" Kill session “{name}”?"),
+            warning,
+        ))),
+        rows[0],
+    );
+    frame.render_widget(
+        Paragraph::new(" All pane processes will stop.").style(text),
+        rows[1],
+    );
+    frame.render_widget(
+        Paragraph::new(" Saved workspace state and pane history will be permanently deleted.")
+            .style(text),
+        rows[2],
+    );
+    frame.render_widget(
+        Paragraph::new(" This cannot be undone.").style(dim),
+        rows[3],
+    );
+
+    let (confirm_rect, cancel_rect) = confirm_kill_session_button_rects(inner);
+    render_action_button(
+        frame,
+        confirm_rect,
+        Some("↵"),
+        "kill and delete",
+        Style::default()
+            .fg(panel_contrast_fg(&app.palette))
+            .bg(app.palette.red)
+            .add_modifier(Modifier::BOLD),
+    );
+    render_action_button(
+        frame,
+        cancel_rect,
+        Some("esc"),
+        "cancel",
+        Style::default()
+            .fg(app.palette.text)
+            .bg(app.palette.surface0)
+            .add_modifier(Modifier::BOLD),
+    );
+}
+
+pub(crate) fn confirm_kill_session_popup_rect(area: Rect) -> Option<Rect> {
+    centered_popup_rect(area, 76, 9)
+}
+
+pub(crate) fn confirm_kill_session_button_rects(inner: Rect) -> (Rect, Rect) {
+    let rects = action_button_row_rects(
+        inner,
+        &[
+            ActionButtonSpec {
+                hint: Some("↵"),
+                label: "kill and delete",
+            },
+            ActionButtonSpec {
+                hint: Some("esc"),
+                label: "cancel",
+            },
+        ],
+        2,
+        inner.height.saturating_sub(1),
+    );
+    (rects[0], rects[1])
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
@@ -797,7 +896,8 @@ mod tests {
     };
 
     use super::{
-        confirm_close_overlay_text, render_new_linked_worktree_overlay, render_rename_overlay,
+        confirm_close_overlay_text, render_confirm_kill_session_overlay,
+        render_new_linked_worktree_overlay, render_rename_overlay,
     };
 
     #[test]
@@ -956,6 +1056,31 @@ mod tests {
             .collect::<String>();
 
         assert!(rendered.contains("fatal: a branch named 'foo' already exists"));
+    }
+
+    #[test]
+    fn kill_session_confirmation_names_destructive_effects() {
+        let mut app = AppState::test_new();
+        app.session_name = Some("review".into());
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+
+        terminal
+            .draw(|frame| {
+                render_confirm_kill_session_overlay(&app, frame, Rect::new(0, 0, 100, 30))
+            })
+            .unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(rendered.contains("Kill session “review”?"));
+        assert!(rendered.contains("All pane processes will stop."));
+        assert!(rendered.contains("permanently deleted."));
+        assert!(rendered.contains("kill and delete"));
     }
 
     #[test]

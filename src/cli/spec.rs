@@ -749,6 +749,12 @@ fn session_command() -> Command {
                 .arg(json_flag()),
         )
         .subcommand(
+            Command::new("kill")
+                .about("Stop and permanently delete a session")
+                .arg(required("name", "NAME"))
+                .arg(json_flag()),
+        )
+        .subcommand(
             Command::new("delete")
                 .about("Delete a stopped session")
                 .arg(required("name", "NAME"))

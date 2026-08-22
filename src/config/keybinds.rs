@@ -314,6 +314,7 @@ pub struct Keybinds {
     pub remove_worktree: ActionKeybinds,
     pub rename_workspace: ActionKeybinds,
     pub close_workspace: ActionKeybinds,
+    pub kill_session: ActionKeybinds,
     pub workspace_picker: ActionKeybinds,
     pub goto: ActionKeybinds,
     pub detach: ActionKeybinds,
@@ -482,6 +483,7 @@ impl Config {
             remove_worktree: empty_action!(),
             rename_workspace: empty_action!(),
             close_workspace: empty_action!(),
+            kill_session: empty_action!(),
             workspace_picker: empty_action!(),
             goto: empty_action!(),
             detach: empty_action!(),
@@ -610,6 +612,7 @@ impl Config {
             apply_action!(keybinds.remove_worktree, remove_worktree, source);
             apply_action!(keybinds.rename_workspace, rename_workspace, source);
             apply_action!(keybinds.close_workspace, close_workspace, source);
+            apply_action!(keybinds.kill_session, kill_session, source);
             apply_action!(keybinds.workspace_picker, workspace_picker, source);
             apply_action!(keybinds.goto, goto, source);
             apply_action!(keybinds.detach, detach, source);
@@ -1595,6 +1598,27 @@ next_tab = "prefix+n"
         let kb = Config::default().keybinds();
         assert!(kb.open_worktree.bindings.is_empty());
         assert!(kb.remove_worktree.bindings.is_empty());
+    }
+
+    #[test]
+    fn kill_session_is_opt_in() {
+        let default = Config::default().keybinds();
+        assert!(default.kill_session.bindings.is_empty());
+
+        let configured: Config = toml::from_str(
+            r#"
+[keys]
+kill_session = "prefix+shift+d"
+"#,
+        )
+        .unwrap();
+        assert_eq!(
+            binding_triggers(&configured.keybinds().kill_session),
+            vec![BindingTrigger::Prefix((
+                KeyCode::Char('d'),
+                KeyModifiers::SHIFT
+            ))]
+        );
     }
 
     #[test]

@@ -63,6 +63,8 @@ pub enum Method {
     ClientWindowTitleClear(EmptyParams),
     #[serde(rename = "session.snapshot")]
     SessionSnapshot(EmptyParams),
+    #[serde(rename = "session.kill")]
+    SessionKill(EmptyParams),
     #[serde(rename = "workspace.create")]
     WorkspaceCreate(WorkspaceCreateParams),
     #[serde(rename = "workspace.list")]

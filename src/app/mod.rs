@@ -560,6 +560,7 @@ impl App {
             request_submit_worktree_open: false,
             request_submit_worktree_remove: false,
             request_reload_config: false,
+            request_kill_session: None,
             request_client_config_reload: false,
             request_clipboard_write: None,
             creating_new_tab: false,
@@ -1926,6 +1927,9 @@ impl App {
             Mode::ConfirmClose => {
                 self.handle_confirm_close_key_via_api(key_event);
             }
+            Mode::ConfirmKillSession => {
+                self.handle_confirm_kill_session_key_via_api(key_event);
+            }
             Mode::ContextMenu => {
                 self.handle_context_menu_key_via_api(key_event);
             }
@@ -2212,6 +2216,7 @@ mod tests {
             Mode::Copy,
             Mode::Resize,
             Mode::ConfirmClose,
+            Mode::ConfirmKillSession,
             Mode::ConfirmRemoveWorktree,
             Mode::ContextMenu,
             Mode::GlobalMenu,
@@ -2605,6 +2610,43 @@ mod tests {
             Some(crate::config::ToastHerdrPosition::TopLeft)
         );
         assert!(app.toast_deadline.is_some());
+    }
+
+    #[test]
+    fn session_kill_api_records_current_named_session() {
+        let mut app = test_app();
+        app.state.session_name = Some("review".into());
+
+        let response =
+            app.handle_api_request_after_internal_events_drained(crate::api::schema::Request {
+                id: "kill".into(),
+                method: crate::api::schema::Method::SessionKill(
+                    crate::api::schema::EmptyParams::default(),
+                ),
+            });
+
+        let parsed: crate::api::schema::SuccessResponse = serde_json::from_str(&response).unwrap();
+        assert_eq!(parsed.result, crate::api::schema::ResponseResult::Ok {});
+        assert_eq!(app.state.request_kill_session.as_deref(), Some("review"));
+        assert!(!app.state.should_quit);
+    }
+
+    #[test]
+    fn session_kill_api_protects_default_session() {
+        let mut app = test_app();
+
+        let response =
+            app.handle_api_request_after_internal_events_drained(crate::api::schema::Request {
+                id: "kill".into(),
+                method: crate::api::schema::Method::SessionKill(
+                    crate::api::schema::EmptyParams::default(),
+                ),
+            });
+
+        let parsed: crate::api::schema::ErrorResponse = serde_json::from_str(&response).unwrap();
+        assert_eq!(parsed.error.code, "default_session_protected");
+        assert!(app.state.request_kill_session.is_none());
+        assert!(!app.state.should_quit);
     }
 
     #[test]

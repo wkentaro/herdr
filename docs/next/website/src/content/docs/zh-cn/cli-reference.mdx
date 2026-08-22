@@ -103,10 +103,11 @@ herdr notification show <title> [--body TEXT] [--position top-left|top-right|bot
 herdr session list [--json]
 herdr session attach <name>
 herdr session stop <name> [--json]
+herdr session kill <name> [--json]
 herdr session delete <name> [--json]
 ```
 
-需要显式停止默认会话时,把会话名写成 `default`。
+`stop` 会结束窗格进程,但保留已保存状态以便以后恢复。`delete` 删除已经停止的命名会话。`kill` 按顺序执行这两个操作,永久删除保存的工作区状态和窗格历史。默认会话可以用名称 `default` 停止,但不能删除或 kill。
 
 ## 工作区
 

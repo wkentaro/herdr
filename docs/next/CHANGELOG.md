@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- Added `herdr session kill <name>` and the opt-in `keys.kill_session` action to stop and permanently delete the current named session after confirmation. The default session remains protected.
+
 ### Changed
 
 - Entering a linked Git worktree in a space's root pane now opens the primary checkout as its parent space while keeping the linked worktree focused.

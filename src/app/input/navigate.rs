@@ -232,6 +232,9 @@ impl App {
                     }
                 }
             }
+            NavigateAction::KillSession => {
+                super::modal::open_confirm_kill_session(&mut self.state);
+            }
             NavigateAction::SwitchWorkspace(idx) => {
                 if let Some(ws_idx) = self.state.workspace_at_visible_position(idx) {
                     self.focus_workspace_idx_via_api(ws_idx);
@@ -1386,6 +1389,7 @@ pub(crate) enum NavigateAction {
     RemoveWorktree,
     RenameWorkspace,
     CloseWorkspace,
+    KillSession,
     SwitchWorkspace(usize),
     SwitchTab(usize),
     FocusAgent(usize),
@@ -1537,6 +1541,7 @@ fn non_indexed_action_for_key(
         (&kb.remove_worktree, NavigateAction::RemoveWorktree),
         (&kb.rename_workspace, NavigateAction::RenameWorkspace),
         (&kb.close_workspace, NavigateAction::CloseWorkspace),
+        (&kb.kill_session, NavigateAction::KillSession),
         (&kb.previous_workspace, NavigateAction::PreviousWorkspace),
         (&kb.next_workspace, NavigateAction::NextWorkspace),
         (&kb.previous_agent, NavigateAction::PreviousAgent),
@@ -1687,6 +1692,9 @@ pub(super) fn execute_navigate_action_in_context(
                     leave_navigate_mode(state);
                 }
             }
+        }
+        NavigateAction::KillSession => {
+            super::modal::open_confirm_kill_session(state);
         }
         NavigateAction::SwitchWorkspace(idx) => {
             if let Some(ws_idx) = state.workspace_at_visible_position(idx) {
@@ -2097,6 +2105,21 @@ mod tests {
         );
 
         assert_eq!(state.mode, Mode::Navigator);
+    }
+
+    #[test]
+    fn configured_kill_session_key_opens_confirmation_for_named_session() {
+        let mut state = state_with_workspaces(&["test"]);
+        state.session_name = Some("review".into());
+        state.keybinds.close_workspace = crate::config::ActionKeybinds::default();
+        state.keybinds.kill_session = crate::config::ActionKeybinds::prefix("D");
+
+        handle_navigate_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('D'), KeyModifiers::SHIFT),
+        );
+
+        assert_eq!(state.mode, Mode::ConfirmKillSession);
     }
 
     #[test]

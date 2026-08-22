@@ -191,6 +191,19 @@ fn request_round_trips_for_server_stop() {
 }
 
 #[test]
+fn request_round_trips_for_session_kill() {
+    let request = Request {
+        id: "req_kill".into(),
+        method: Method::SessionKill(EmptyParams::default()),
+    };
+
+    let json = serde_json::to_value(&request).unwrap();
+    assert_eq!(json["method"], "session.kill");
+    let restored: Request = serde_json::from_value(json).unwrap();
+    assert_eq!(restored, request);
+}
+
+#[test]
 fn request_round_trips_for_server_reload_config() {
     let request = Request {
         id: "req_reload".into(),

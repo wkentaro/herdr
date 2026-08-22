@@ -917,8 +917,30 @@ impl HeadlessServer {
         Ok(())
     }
 
+    fn spawn_requested_session_kill(&mut self) -> Result<(), String> {
+        let Some(name) = self.app.state.request_kill_session.take() else {
+            return Ok(());
+        };
+        crate::session::spawn_kill_session(&name)?;
+        Ok(())
+    }
+
     fn handle_deferred_requests_headless(&mut self) -> bool {
         let mut needs_render = false;
+
+        if let Err(message) = self.spawn_requested_session_kill() {
+            error!(%message, "failed to start session kill helper");
+            let previous_toast = self.app.state.toast.clone();
+            self.app.state.toast = Some(crate::app::state::ToastNotification {
+                kind: crate::app::state::ToastKind::NeedsAttention,
+                title: "Session kill failed".to_string(),
+                context: message,
+                position: None,
+                target: None,
+            });
+            self.app.sync_toast_deadline(previous_toast);
+            needs_render = true;
+        }
 
         if self.app.state.request_complete_onboarding {
             self.app.state.request_complete_onboarding = false;
@@ -3676,6 +3698,9 @@ impl HeadlessServer {
             _ => {}
         }
 
+        let session_kill_request_id =
+            matches!(&msg.request.method, api::schema::Method::SessionKill(_))
+                .then(|| msg.request.id.clone());
         let pane_graphics_revision_before = matches!(
             &msg.request.method,
             api::schema::Method::PaneGraphicsSet(_)
@@ -3774,6 +3799,18 @@ impl HeadlessServer {
             self.app
                 .handle_api_request_after_internal_events_drained(msg.request)
         };
+        if let Some(id) = session_kill_request_id {
+            if let Err(message) = self.spawn_requested_session_kill() {
+                response = serde_json::to_string(&api::schema::ErrorResponse {
+                    id,
+                    error: api::schema::ErrorBody {
+                        code: "session_kill_failed".into(),
+                        message,
+                    },
+                })
+                .unwrap_or_else(|_| "{}".to_string());
+            }
+        }
         if let Some(snapshot) = frozen_alt_screen_read {
             if let Ok(mut success) = serde_json::from_str::<api::schema::SuccessResponse>(&response)
             {
@@ -5043,6 +5080,8 @@ fn is_keybinding_config_diagnostic(diagnostic: &str) -> bool {
 
 /// Run the headless server. This is the entry point called from main.rs.
 pub fn run_server() -> io::Result<()> {
+    crate::session::ensure_session_start_allowed()
+        .map_err(|message| io::Error::new(io::ErrorKind::PermissionDenied, message))?;
     init_logging();
     crate::platform::raise_server_nofile_limit();
 

@@ -1011,6 +1011,25 @@ impl App {
                 );
             }
             Method::SessionSnapshot(_) => return self.handle_session_snapshot(request.id),
+            Method::SessionKill(_) => {
+                let Some(name) = self
+                    .state
+                    .session_name
+                    .as_deref()
+                    .filter(|name| *name != crate::session::DEFAULT_SESSION_NAME)
+                else {
+                    return responses::encode_error(
+                        request.id,
+                        "default_session_protected",
+                        "only named sessions can be killed",
+                    );
+                };
+                self.state.request_kill_session = Some(name.to_string());
+                SuccessResponse {
+                    id: request.id,
+                    result: ResponseResult::Ok {},
+                }
+            }
             Method::WorkspaceList(_) => return self.handle_workspace_list(request.id),
             Method::WorkspaceGet(target) => return self.handle_workspace_get(request.id, target),
             Method::WorkspaceCreate(params) => {

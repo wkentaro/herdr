@@ -18,8 +18,9 @@ use crate::{
 use super::WheelRouting;
 use super::{
     modal::{
-        apply_global_menu_action, confirm_close_cancel, global_menu_actions, leave_modal,
-        modal_action_from_buttons, open_global_menu, open_new_tab_dialog, ModalAction,
+        apply_global_menu_action, confirm_close_cancel, confirm_kill_session_cancel,
+        global_menu_actions, leave_modal, modal_action_from_buttons, open_global_menu,
+        open_new_tab_dialog, ModalAction,
     },
     settings::SettingsAction,
     ScrollbarClickTarget, TAB_DRAG_THRESHOLD, WORKSPACE_DRAG_THRESHOLD,
@@ -57,6 +58,7 @@ pub(super) enum MouseAction {
     },
     RenameModal(ModalAction),
     ConfirmCloseAccept,
+    ConfirmKillSessionAccept,
     ContextMenu {
         menu: ContextMenuState,
         idx: usize,
@@ -106,6 +108,34 @@ impl AppState {
     ) -> Option<MouseAction> {
         if self.mode == Mode::Onboarding {
             self.handle_onboarding_mouse(mouse);
+            return None;
+        }
+
+        if self.mode == Mode::ConfirmKillSession {
+            if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+                let popup = self.confirm_kill_session_rect();
+                let inner = Rect::new(
+                    popup.x + 1,
+                    popup.y + 1,
+                    popup.width.saturating_sub(2),
+                    popup.height.saturating_sub(2),
+                );
+                let (confirm, cancel) = crate::ui::confirm_kill_session_button_rects(inner);
+                match modal_action_from_buttons(
+                    mouse.column,
+                    mouse.row,
+                    &[
+                        (confirm, ModalAction::Confirm),
+                        (cancel, ModalAction::Cancel),
+                    ],
+                ) {
+                    Some(ModalAction::Confirm) => {
+                        return Some(MouseAction::ConfirmKillSessionAccept);
+                    }
+                    Some(ModalAction::Cancel) | None => confirm_kill_session_cancel(self),
+                    _ => {}
+                }
+            }
             return None;
         }
 
@@ -1263,6 +1293,10 @@ impl AppState {
 
     pub(crate) fn confirm_close_rect(&self) -> Rect {
         crate::ui::confirm_close_popup_rect(self.view.terminal_area).unwrap_or_default()
+    }
+
+    pub(crate) fn confirm_kill_session_rect(&self) -> Rect {
+        crate::ui::confirm_kill_session_popup_rect(self.view.terminal_area).unwrap_or_default()
     }
 
     fn context_menu_item_at(&self, col: u16, row: u16) -> Option<usize> {
@@ -3412,6 +3446,34 @@ mod tests {
         ));
 
         assert_eq!(app.state.workspaces.len(), 1);
+        assert_eq!(app.state.mode, Mode::Terminal);
+    }
+
+    #[test]
+    fn clicking_kill_session_confirmation_records_named_session() {
+        let mut app = app_for_mouse_test();
+        app.state.workspaces = vec![Workspace::test_new("test")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.session_name = Some("review".into());
+        app.state.mode = Mode::ConfirmKillSession;
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 24));
+
+        let popup = app.state.confirm_kill_session_rect();
+        let inner = Rect::new(
+            popup.x + 1,
+            popup.y + 1,
+            popup.width.saturating_sub(2),
+            popup.height.saturating_sub(2),
+        );
+        let (confirm, _) = crate::ui::confirm_kill_session_button_rects(inner);
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            confirm.x,
+            confirm.y,
+        ));
+
+        assert_eq!(app.state.request_kill_session.as_deref(), Some("review"));
         assert_eq!(app.state.mode, Mode::Terminal);
     }
 

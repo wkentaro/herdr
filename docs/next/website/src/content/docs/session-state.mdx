@@ -32,6 +32,12 @@ If the Herdr server stops and starts again, the original pane processes are gone
 
 Snapshot restore does not preserve running shells, servers, tests, or arbitrary processes. Panes that cannot use a stronger restore path come back as new shells in their saved directories.
 
+## Stop, delete, and kill
+
+Stopping a session ends its pane processes but keeps `session.json` and any saved pane history, so the layout can be restored later. Deleting removes a named session that is already stopped. Killing is the destructive combination: Herdr stops the named session gracefully, waits for its final save and sockets to close, then permanently deletes its saved workspace state and pane history.
+
+The default session can be stopped but cannot be deleted or killed. The `keys.kill_session` action is unset by default and always opens a confirmation before it requests a kill.
+
 ## Pane screen history replay
 
 Pane screen history restores recent terminal contents after a full server restart without restoring the old process.
