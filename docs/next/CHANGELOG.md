@@ -2,13 +2,20 @@
 
 ## Unreleased
 
-### Added
+## [0.8.2-fork.1] - 2026-08-22
 
+### Added
 - Added `herdr session kill <name>` and the opt-in `keys.kill_session` action to stop and permanently delete the current named session after confirmation. The default session remains protected.
+- With exactly two panes, the shared divider now accents the half beside the focused pane.
 
 ### Changed
-
+- The expanded sidebar header now shows the active session name, and session snapshots expose it as `name`.
 - Entering a linked Git worktree in a space's root pane now opens the primary checkout as its parent space while keeping the linked worktree focused.
+- Spaces now group under the repository they belong to, so worktrees created outside Herdr and several spaces on one checkout share a single group.
+- Grouped rows now show their checkout name alongside the branch and ahead/behind counts instead of replacing the name with the branch.
+
+### Fixed
+- Fixed a panic on builds whose version carries a prerelease suffix, which killed the server whenever a plugin manifest was loaded.
 
 ## [0.8.2] - 2026-08-19
 
