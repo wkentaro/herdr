@@ -407,6 +407,7 @@ fn run_session_command(args: &[String]) -> std::io::Result<i32> {
         "list" => session_list(&args[1..]),
         "attach" => session_attach_help(&args[1..]),
         "stop" => session_stop(&args[1..]),
+        "kill" => session_kill(&args[1..]),
         "delete" => session_delete(&args[1..]),
         "help" | "--help" | "-h" => {
             print_session_help();
@@ -502,6 +503,32 @@ fn session_delete(args: &[String]) -> std::io::Result<i32> {
         }
         Err(message) => {
             print_session_error("session_delete_failed", &message);
+            Ok(1)
+        }
+    }
+}
+
+fn session_kill(args: &[String]) -> std::io::Result<i32> {
+    let (name, json) =
+        match parse_session_name_and_json(args, "usage: herdr session kill <name> [--json]") {
+            Ok(parsed) => parsed,
+            Err(code) => return Ok(code),
+        };
+
+    match crate::session::kill_session(&name) {
+        Ok(session) => {
+            if json {
+                _print_json(&serde_json::json!({
+                    "killed": true,
+                    "session": session,
+                }));
+            } else {
+                println!("killed session {}", session.name);
+            }
+            Ok(0)
+        }
+        Err(message) => {
+            print_session_error("session_kill_failed", &message);
             Ok(1)
         }
     }
@@ -996,6 +1023,7 @@ fn print_session_help() {
     eprintln!("  herdr session list [--json]");
     eprintln!("  herdr session attach <name>");
     eprintln!("  herdr session stop <name> [--json]");
+    eprintln!("  herdr session kill <name> [--json]");
     eprintln!("  herdr session delete <name> [--json]");
     eprintln!("  use 'default' as <name> to target the default session for stop");
 }

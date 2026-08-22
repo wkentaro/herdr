@@ -260,6 +260,12 @@
           "description": "Close the selected workspace."
         },
         {
+          "key": "keys.kill_session",
+          "type": "keybinding",
+          "default": "unset",
+          "description": "Stop and permanently delete the current named session after confirmation. Unset by default."
+        },
+        {
           "key": "keys.workspace_picker",
           "type": "keybinding",
           "default": "\"prefix+w\"",

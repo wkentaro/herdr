@@ -103,10 +103,11 @@ herdr notification show <title> [--body TEXT] [--position top-left|top-right|bot
 herdr session list [--json]
 herdr session attach <name>
 herdr session stop <name> [--json]
+herdr session kill <name> [--json]
 herdr session delete <name> [--json]
 ```
 
-デフォルトセッションを明示的に停止する必要があるときは、セッション名として `default` を使ってください。
+`stop` はペインのプロセスを終了しますが、後で復元できるよう保存済み状態を残します。`delete` は停止済みの名前付きセッションを削除します。`kill` はこの 2 つを順番に実行し、保存済みのワークスペース状態とペイン履歴を完全に削除します。デフォルトセッションは `default` という名前で停止できますが、削除も kill もできません。
 
 ## ワークスペース
 

@@ -101,6 +101,10 @@ impl App {
         self.dispatch_runtime_mutation(id, Method::ServerReloadConfig(EmptyParams::default()))
     }
 
+    pub(crate) fn runtime_session_kill(&mut self, id: &'static str) -> String {
+        self.dispatch_runtime_mutation(id, Method::SessionKill(EmptyParams::default()))
+    }
+
     pub(crate) fn runtime_pane_focus(&mut self, id: &'static str, pane_id: String) -> String {
         self.dispatch_runtime_mutation(id, Method::PaneFocus(PaneTarget { pane_id }))
     }

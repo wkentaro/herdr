@@ -736,6 +736,16 @@ pub(super) fn open_confirm_close(state: &mut AppState) {
     state.mode = Mode::ConfirmClose;
 }
 
+pub(super) fn open_confirm_kill_session(state: &mut AppState) {
+    if state
+        .session_name
+        .as_deref()
+        .is_some_and(|name| name != crate::session::DEFAULT_SESSION_NAME)
+    {
+        state.mode = Mode::ConfirmKillSession;
+    }
+}
+
 #[cfg(test)]
 pub(super) fn confirm_close_accept(state: &mut AppState) {
     state.close_selected_workspace();
@@ -748,6 +758,31 @@ pub(super) fn confirm_close_accept(state: &mut AppState) {
 
 pub(super) fn confirm_close_cancel(state: &mut AppState) {
     state.mode = Mode::Navigate;
+}
+
+#[cfg(test)]
+fn confirm_kill_session_accept(state: &mut AppState) {
+    if let Some(name) = state
+        .session_name
+        .as_deref()
+        .filter(|name| *name != crate::session::DEFAULT_SESSION_NAME)
+    {
+        state.request_kill_session = Some(name.to_string());
+    }
+    leave_modal(state);
+}
+
+pub(super) fn confirm_kill_session_cancel(state: &mut AppState) {
+    leave_modal(state);
+}
+
+#[cfg(test)]
+pub(crate) fn handle_confirm_kill_session_key(state: &mut AppState, key: KeyEvent) {
+    match modal_action_from_key(&key, CONFIRM_CLOSE_ACTIONS) {
+        Some(ModalAction::Confirm) => confirm_kill_session_accept(state),
+        Some(ModalAction::Cancel) => confirm_kill_session_cancel(state),
+        _ => {}
+    }
 }
 
 #[cfg(test)]
@@ -1164,6 +1199,19 @@ impl App {
                 self.confirm_close_accept_via_api();
             }
             Some(ModalAction::Cancel) => confirm_close_cancel(&mut self.state),
+            _ => {}
+        }
+    }
+
+    pub(crate) fn confirm_kill_session_accept_via_api(&mut self) {
+        self.runtime_session_kill("tui.session.kill");
+        leave_modal(&mut self.state);
+    }
+
+    pub(crate) fn handle_confirm_kill_session_key_via_api(&mut self, key: KeyEvent) {
+        match modal_action_from_key(&key, CONFIRM_CLOSE_ACTIONS) {
+            Some(ModalAction::Confirm) => self.confirm_kill_session_accept_via_api(),
+            Some(ModalAction::Cancel) => confirm_kill_session_cancel(&mut self.state),
             _ => {}
         }
     }
@@ -2110,6 +2158,46 @@ mod tests {
             KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()),
         );
         assert_eq!(state.workspaces.len(), 1);
+    }
+
+    #[test]
+    fn confirm_kill_session_escape_is_a_no_op() {
+        let mut state = state_with_workspaces(&["test"]);
+        state.session_name = Some("review".into());
+        open_confirm_kill_session(&mut state);
+
+        handle_confirm_kill_session_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::empty()),
+        );
+
+        assert_eq!(state.mode, Mode::Terminal);
+        assert!(state.request_kill_session.is_none());
+    }
+
+    #[test]
+    fn confirm_kill_session_enter_records_current_named_session() {
+        let mut state = state_with_workspaces(&["test"]);
+        state.session_name = Some("review".into());
+        open_confirm_kill_session(&mut state);
+
+        handle_confirm_kill_session_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()),
+        );
+
+        assert_eq!(state.mode, Mode::Terminal);
+        assert_eq!(state.request_kill_session.as_deref(), Some("review"));
+    }
+
+    #[test]
+    fn default_session_does_not_open_kill_confirmation() {
+        let mut state = state_with_workspaces(&["test"]);
+        let previous_mode = state.mode;
+
+        open_confirm_kill_session(&mut state);
+
+        assert_eq!(state.mode, previous_mode);
     }
 
     #[test]
