@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## [0.8.0-fork.6] - 2026-08-22
+
+### Added
+- Added `herdr session kill <name>` and the opt-in `keys.kill_session` action to stop and permanently delete the current named session after confirmation. The default session remains protected.
+
 ## [0.8.0-fork.5] - 2026-08-21
 
 ### Added
