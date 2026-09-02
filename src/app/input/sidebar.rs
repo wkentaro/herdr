@@ -387,7 +387,7 @@ impl AppState {
     ) -> Option<crate::api::schema::WorkspaceMoveBlockParams> {
         let source = self.workspaces.get(source_ws_idx)?;
         if source
-            .space_group()
+            .worktree_space()
             .is_some_and(|space| space.is_linked_worktree)
         {
             return None;
@@ -419,7 +419,7 @@ impl AppState {
             return None;
         }
 
-        let workspace_ids = match source.space_group() {
+        let workspace_ids = match source.worktree_space() {
             Some(source_space) => {
                 let mut ids = vec![source.id.clone()];
                 ids.extend(
@@ -428,7 +428,7 @@ impl AppState {
                         .filter(|workspace| workspace.id != source.id)
                         .filter(|workspace| {
                             workspace
-                                .space_group()
+                                .worktree_space()
                                 .is_some_and(|space| space.key == source_space.key)
                         })
                         .map(|workspace| workspace.id.clone()),
@@ -441,14 +441,14 @@ impl AppState {
             crate::app::state::WorkspaceDropTarget::Before(target_ws_idx) => {
                 let target = self.workspaces.get(target_ws_idx)?;
                 let anchor = match crate::ui::workspace_parent_group_state(self, target_ws_idx)
-                    .and_then(|_| target.space_group())
+                    .and_then(|_| target.worktree_space())
                 {
                     Some(target_space) => self
                         .workspaces
                         .iter()
                         .find(|workspace| {
                             workspace
-                                .space_group()
+                                .worktree_space()
                                 .is_some_and(|space| space.key == target_space.key)
                         })
                         .unwrap_or(target),

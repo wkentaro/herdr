@@ -193,9 +193,17 @@ pub(super) fn agent_panel_status_key(state: AgentState, seen: bool) -> &'static 
     }
 }
 
-fn workspace_row_height(app: &AppState, ws: &crate::workspace::Workspace) -> u16 {
+fn workspace_row_height(app: &AppState, ws: &crate::workspace::Workspace, indented: bool) -> u16 {
     let (state, seen) = ws.aggregate_state(&app.terminals);
-    let label = ws.display_name_from_terminals(&app.terminals);
+    let label = if indented {
+        grouped_child_display_label(
+            &ws.display_name_from_terminals(&app.terminals),
+            ws.branch().as_deref(),
+            ws.custom_name.is_some(),
+        )
+    } else {
+        ws.display_name_from_terminals(&app.terminals)
+    };
     let token_values = ws.metadata_tokens.values();
     tokens::space_rows(
         &app.sidebar_spaces,
@@ -205,6 +213,7 @@ fn workspace_row_height(app: &AppState, ws: &crate::workspace::Workspace) -> u16
             state_text: state_label(state, seen),
             ahead_behind: ws.git_ahead_behind(),
             tokens: &token_values,
+            suppress_git_details: indented,
         },
     )
     .len()
@@ -215,9 +224,10 @@ fn workspace_row_height(app: &AppState, ws: &crate::workspace::Workspace) -> u16
 fn workspace_row_height_in_body(
     app: &AppState,
     workspace: &crate::workspace::Workspace,
+    indented: bool,
     body_height: u16,
 ) -> u16 {
-    workspace_row_height(app, workspace).min(body_height)
+    workspace_row_height(app, workspace, indented).min(body_height)
 }
 
 fn workspace_entry_gap(app: &AppState, entries: &[WorkspaceListEntry], entry_idx: usize) -> u16 {
@@ -241,7 +251,7 @@ fn workspace_attention_priority(state: AgentState, seen: bool) -> u8 {
 fn space_aggregate_state(app: &AppState, key: &str) -> (AgentState, bool) {
     app.workspaces
         .iter()
-        .filter(|ws| ws.space_group().is_some_and(|space| space.key == key))
+        .filter(|ws| ws.worktree_space().is_some_and(|space| space.key == key))
         .map(|ws| ws.aggregate_state(&app.terminals))
         .max_by_key(|(state, seen)| workspace_attention_priority(*state, *seen))
         .unwrap_or((AgentState::Unknown, true))
@@ -251,24 +261,41 @@ pub(crate) fn workspace_parent_group_state(
     app: &AppState,
     ws_idx: usize,
 ) -> Option<(String, bool)> {
-    let space = app.workspaces.get(ws_idx)?.space_group()?;
+    let space = app.workspaces.get(ws_idx)?.worktree_space()?;
     if space.is_linked_worktree {
         return None;
     }
-    let members = app
+    let member_count = app
         .workspaces
         .iter()
         .filter(|ws| {
-            ws.space_group()
+            ws.worktree_space()
                 .is_some_and(|member| member.key == space.key)
         })
         .count();
-    (members >= 2).then(|| {
+    (member_count >= 2).then(|| {
         (
-            space.key.to_string(),
-            app.collapsed_space_keys.contains(space.key),
+            space.key.clone(),
+            app.collapsed_space_keys.contains(&space.key),
         )
     })
+}
+
+pub(crate) fn grouped_child_display_label(
+    label: &str,
+    branch: Option<&str>,
+    has_custom_name: bool,
+) -> String {
+    if has_custom_name {
+        return label.to_string();
+    }
+    let Some(branch) = branch else {
+        return label.to_string();
+    };
+    branch
+        .strip_prefix("worktree/")
+        .unwrap_or(branch)
+        .to_string()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -311,14 +338,13 @@ pub(crate) fn workspace_list_entries_expanded(app: &AppState) -> Vec<WorkspaceLi
 fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<WorkspaceListEntry> {
     let mut members_by_key = std::collections::HashMap::<String, Vec<usize>>::new();
     for (ws_idx, ws) in app.workspaces.iter().enumerate() {
-        if let Some(space) = ws.space_group() {
+        if let Some(space) = ws.worktree_space() {
             members_by_key
-                .entry(space.key.to_string())
+                .entry(space.key.clone())
                 .or_default()
                 .push(ws_idx);
         }
     }
-    // A group needs a repo checkout to head it; worktrees alone stay flat.
     let grouped_keys = members_by_key
         .iter()
         .filter(|(_, members)| {
@@ -326,7 +352,7 @@ fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<Wor
                 && members.iter().any(|idx| {
                     app.workspaces
                         .get(*idx)
-                        .and_then(|ws| ws.space_group())
+                        .and_then(|ws| ws.worktree_space())
                         .is_some_and(|space| !space.is_linked_worktree)
                 })
         })
@@ -341,16 +367,16 @@ fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<Wor
     let active_group = visible_group_idx.and_then(|idx| {
         app.workspaces
             .get(idx)
-            .and_then(|ws| ws.space_group())
-            .map(|space| space.key.to_string())
+            .and_then(|ws| ws.worktree_space())
+            .map(|space| space.key.clone())
     });
 
     let mut emitted_groups = std::collections::HashSet::<String>::new();
     let mut entries = Vec::new();
     for (ws_idx, ws) in app.workspaces.iter().enumerate() {
         let Some(space) = ws
-            .space_group()
-            .filter(|space| grouped_keys.contains(space.key))
+            .worktree_space()
+            .filter(|space| grouped_keys.contains(&space.key))
         else {
             entries.push(WorkspaceListEntry::Workspace {
                 ws_idx,
@@ -359,17 +385,17 @@ fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<Wor
             continue;
         };
 
-        if !emitted_groups.insert(space.key.to_string()) {
+        if !emitted_groups.insert(space.key.clone()) {
             continue;
         }
 
-        let Some(members) = members_by_key.get(space.key) else {
+        let Some(members) = members_by_key.get(&space.key) else {
             continue;
         };
         let Some(parent_idx) = members.iter().copied().find(|idx| {
             app.workspaces
                 .get(*idx)
-                .and_then(|member| member.space_group())
+                .and_then(|member| member.worktree_space())
                 .is_some_and(|member_space| !member_space.is_linked_worktree)
         }) else {
             entries.push(WorkspaceListEntry::Workspace {
@@ -378,7 +404,7 @@ fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<Wor
             });
             continue;
         };
-        let collapsed = !force_expanded && app.collapsed_space_keys.contains(space.key);
+        let collapsed = !force_expanded && app.collapsed_space_keys.contains(&space.key);
         entries.push(WorkspaceListEntry::Workspace {
             ws_idx: parent_idx,
             indented: false,
@@ -387,7 +413,7 @@ fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<Wor
         if collapsed {
             if let Some(active_idx) = visible_group_idx
                 .filter(|idx| *idx != parent_idx)
-                .filter(|_| active_group.as_deref() == Some(space.key))
+                .filter(|_| active_group.as_deref() == Some(space.key.as_str()))
             {
                 entries.push(WorkspaceListEntry::Workspace {
                     ws_idx: active_idx,
@@ -437,12 +463,12 @@ fn workspace_list_visible_count(app: &AppState, area: Rect, scroll: usize) -> us
     let entries = workspace_list_entries(app);
     for (entry_idx, entry) in entries.iter().enumerate().skip(scroll) {
         let (row_height, gap) = match entry {
-            WorkspaceListEntry::Workspace { ws_idx, .. } => {
+            WorkspaceListEntry::Workspace { ws_idx, indented } => {
                 let Some(ws) = app.workspaces.get(*ws_idx) else {
                     continue;
                 };
                 (
-                    workspace_row_height_in_body(app, ws, body.height),
+                    workspace_row_height_in_body(app, ws, *indented, body.height),
                     workspace_entry_gap(app, &entries, entry_idx),
                 )
             }
@@ -463,12 +489,13 @@ fn workspace_list_bottom_start(app: &AppState, area: Rect) -> usize {
     let mut used_rows = 0u16;
     let mut start = entries.len();
     for (entry_idx, entry) in entries.iter().enumerate().rev() {
-        let WorkspaceListEntry::Workspace { ws_idx, .. } = entry;
+        let WorkspaceListEntry::Workspace { ws_idx, indented } = entry;
         let Some(workspace) = app.workspaces.get(*ws_idx) else {
             continue;
         };
         let gap = workspace_entry_gap(app, &entries, entry_idx);
-        let needed = workspace_row_height_in_body(app, workspace, body.height).saturating_add(gap);
+        let needed = workspace_row_height_in_body(app, workspace, *indented, body.height)
+            .saturating_add(gap);
         if used_rows.saturating_add(needed) > body.height {
             break;
         }
@@ -656,7 +683,7 @@ pub(crate) fn compute_workspace_list_areas(
                 let Some(ws) = app.workspaces.get(*ws_idx) else {
                     continue;
                 };
-                let row_height = workspace_row_height_in_body(app, ws, body.height);
+                let row_height = workspace_row_height_in_body(app, ws, *indented, body.height);
                 let gap = workspace_entry_gap(app, &entries, entry_idx);
                 if row_y.saturating_add(row_height) > body_bottom {
                     break;
@@ -1276,7 +1303,12 @@ fn render_workspace_list(
             Style::default().fg(p.subtext0)
         };
 
-        let display_label = ws.display_name_from(&app.terminals, terminal_runtimes);
+        let label = ws.display_name_from(&app.terminals, terminal_runtimes);
+        let display_label = if card.indented {
+            grouped_child_display_label(&label, ws.branch().as_deref(), ws.custom_name.is_some())
+        } else {
+            label
+        };
         let parent_group = (!card.indented)
             .then(|| workspace_parent_group_state(app, i))
             .flatten();
@@ -1313,6 +1345,7 @@ fn render_workspace_list(
                 state_text: state_label(display_state, display_seen),
                 ahead_behind: ws.git_ahead_behind(),
                 tokens: &token_values,
+                suppress_git_details: card.indented,
             },
         );
 
@@ -2656,41 +2689,19 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
     }
 
     #[test]
-    fn grouped_child_row_shows_checkout_name_and_branch() {
-        let mut app = crate::app::state::AppState::test_new();
-        let mut parent = workspace_with_worktree_space("main", Some("repo-key"), "/repo/herdr");
-        parent.cached_git_branch = Some("fork".into());
-        let mut child =
-            workspace_with_worktree_space("jfiado", Some("repo-key"), "/repo/herdr/.wt/jfiado");
-        child.cached_git_branch = Some("worktree/jfiado".into());
-        app.workspaces = vec![parent, child];
-        app.active = Some(0);
-        app.selected = 0;
-        app.mode = Mode::Terminal;
-        app.view.workspace_card_areas = vec![
-            crate::app::state::WorkspaceCardArea {
-                ws_idx: 0,
-                rect: Rect::new(0, 1, 32, 2),
-                indented: false,
-            },
-            crate::app::state::WorkspaceCardArea {
-                ws_idx: 1,
-                rect: Rect::new(0, 3, 32, 2),
-                indented: true,
-            },
-        ];
+    fn grouped_child_label_keeps_custom_workspace_name() {
+        assert_eq!(
+            grouped_child_display_label("renamed issue", Some("worktree/issue-137"), true),
+            "renamed issue"
+        );
+    }
 
-        let mut terminal = Terminal::new(TestBackend::new(32, 8)).expect("test terminal");
-        let runtimes = crate::terminal::TerminalRuntimeRegistry::new();
-        terminal
-            .draw(|frame| {
-                render_workspace_list(&app, &runtimes, frame, Rect::new(0, 0, 32, 8), false)
-            })
-            .expect("workspace list should render");
-
-        let buffer = terminal.backend().buffer();
-        assert!(row_text(buffer, 3, 32).contains("jfiado"));
-        assert!(row_text(buffer, 4, 32).contains("worktree/jfiado"));
+    #[test]
+    fn grouped_child_label_uses_short_branch_for_auto_named_workspace() {
+        assert_eq!(
+            grouped_child_display_label("herdr-issue", Some("worktree/issue-137"), false),
+            "issue-137"
+        );
     }
 
     #[test]
@@ -2745,14 +2756,6 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             repo_root: std::path::PathBuf::from(format!("/repo/{name}")),
             is_linked_worktree: false,
         });
-        ws
-    }
-
-    fn workspace_with_linked_git_space(name: &str, key: &str) -> crate::workspace::Workspace {
-        let mut ws = workspace_with_git_space(name, key);
-        if let Some(space) = ws.cached_git_space.as_mut() {
-            space.is_linked_worktree = true;
-        }
         ws
     }
 
@@ -2942,52 +2945,6 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
     }
 
     #[test]
-    fn discovered_worktree_groups_under_its_repo_checkout() {
-        let mut app = AppState::test_new();
-        app.workspaces = vec![
-            workspace_with_linked_git_space("jfiado", "repo-key"),
-            workspace_with_git_space("herdr", "repo-key"),
-        ];
-
-        assert_eq!(
-            workspace_list_entries(&app),
-            vec![
-                WorkspaceListEntry::Workspace {
-                    ws_idx: 1,
-                    indented: false,
-                },
-                WorkspaceListEntry::Workspace {
-                    ws_idx: 0,
-                    indented: true,
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn workspace_list_entries_keep_separate_repos_flat() {
-        let mut app = AppState::test_new();
-        app.workspaces = vec![
-            workspace_with_git_space("herdr", "herdr-key"),
-            workspace_with_git_space("labelme", "labelme-key"),
-        ];
-
-        assert_eq!(
-            workspace_list_entries(&app),
-            vec![
-                WorkspaceListEntry::Workspace {
-                    ws_idx: 0,
-                    indented: false,
-                },
-                WorkspaceListEntry::Workspace {
-                    ws_idx: 1,
-                    indented: false,
-                },
-            ]
-        );
-    }
-
-    #[test]
     fn linked_only_worktree_members_do_not_form_parentless_group() {
         let mut app = AppState::test_new();
         app.workspaces = vec![
@@ -3126,7 +3083,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
     }
 
     #[test]
-    fn workspace_list_entries_group_workspaces_sharing_a_repo() {
+    fn workspace_list_entries_do_not_group_normal_git_workspaces() {
         let mut app = AppState::test_new();
         app.workspaces = vec![
             workspace_with_git_space("one", "repo-key"),
@@ -3142,14 +3099,14 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
                 },
                 WorkspaceListEntry::Workspace {
                     ws_idx: 1,
-                    indented: true,
+                    indented: false,
                 },
             ]
         );
     }
 
     #[test]
-    fn workspace_list_entries_attach_normal_git_workspace_to_its_repo_group() {
+    fn workspace_list_entries_do_not_auto_attach_normal_git_workspace_to_group() {
         let mut app = AppState::test_new();
         app.workspaces = vec![
             workspace_with_worktree_space("main", Some("repo-key"), "/repo/herdr"),
@@ -3165,12 +3122,12 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
                     indented: false,
                 },
                 WorkspaceListEntry::Workspace {
-                    ws_idx: 1,
+                    ws_idx: 2,
                     indented: true,
                 },
                 WorkspaceListEntry::Workspace {
-                    ws_idx: 2,
-                    indented: true,
+                    ws_idx: 1,
+                    indented: false,
                 },
             ]
         );

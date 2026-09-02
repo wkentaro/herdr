@@ -94,6 +94,7 @@ pub(super) struct SpaceTokenContext<'a> {
     pub state_text: &'a str,
     pub ahead_behind: Option<(usize, usize)>,
     pub tokens: &'a std::collections::HashMap<String, String>,
+    pub suppress_git_details: bool,
 }
 
 pub(super) fn space_rows(
@@ -116,13 +117,15 @@ pub(super) fn space_rows(
                         SpaceSidebarToken::Workspace => {
                             Some(ResolvedTokenKind::Workspace(context.workspace.to_string()))
                         }
-                        SpaceSidebarToken::Branch => context
+                        SpaceSidebarToken::Branch if !context.suppress_git_details => context
                             .branch
                             .map(|branch| ResolvedTokenKind::Branch(branch.to_string())),
-                        SpaceSidebarToken::GitStatus => context
+                        SpaceSidebarToken::Branch => None,
+                        SpaceSidebarToken::GitStatus if !context.suppress_git_details => context
                             .ahead_behind
                             .filter(|(ahead, behind)| *ahead > 0 || *behind > 0)
                             .map(|(ahead, behind)| ResolvedTokenKind::GitStatus { ahead, behind }),
+                        SpaceSidebarToken::GitStatus => None,
                         SpaceSidebarToken::Custom(name) => context
                             .tokens
                             .get(name)
@@ -284,6 +287,29 @@ mod tests {
     }
 
     #[test]
+    fn grouped_children_suppress_all_builtin_git_details() {
+        let config = SpacesSidebarConfig::default();
+
+        assert_eq!(
+            space_rows(
+                &config,
+                SpaceTokenContext {
+                    workspace: "feature",
+                    branch: Some("worktree/feature"),
+                    state_text: "idle",
+                    ahead_behind: Some((2, 1)),
+                    tokens: &std::collections::HashMap::new(),
+                    suppress_git_details: true,
+                },
+            ),
+            vec![vec![
+                ResolvedToken::unstyled(ResolvedTokenKind::StateIcon),
+                ResolvedToken::unstyled(ResolvedTokenKind::Workspace("feature".into())),
+            ]]
+        );
+    }
+
+    #[test]
     fn workspace_custom_token_can_replace_git_specific_details() {
         let tokens = std::collections::HashMap::from([("jj_status".into(), "2 changes".into())]);
         let config = SpacesSidebarConfig {
@@ -300,6 +326,7 @@ mod tests {
                     state_text: "idle",
                     ahead_behind: None,
                     tokens: &tokens,
+                    suppress_git_details: false,
                 },
             ),
             vec![vec![ResolvedToken::unstyled(ResolvedTokenKind::Custom(

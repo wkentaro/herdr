@@ -22,18 +22,13 @@ mod tab;
 #[cfg(test)]
 use self::git::git_ahead_behind;
 use self::git::git_status_cache_key_for_space;
-#[cfg(test)]
-pub(crate) use self::git::test_support::create_repo_with_linked_worktree;
+pub(crate) use self::{git::git_status_snapshot_for_cwd_with_demand, tab::MovedPane};
 pub use self::{
     git::{
         derive_label_from_cwd, fallback_label_from_cwd, git_branch, git_space_metadata,
         git_status_cache_key, GitSpaceMetadata, GitStatusCacheEntry, GitStatusRefreshDemand,
     },
     tab::{NewPane, Tab},
-};
-pub(crate) use self::{
-    git::{find_primary_worktree_root, git_status_snapshot_for_cwd_with_demand},
-    tab::MovedPane,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -42,12 +37,6 @@ pub struct WorktreeSpaceMembership {
     pub label: String,
     pub repo_root: PathBuf,
     pub checkout_path: PathBuf,
-    pub is_linked_worktree: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SpaceGroup<'a> {
-    pub key: &'a str,
     pub is_linked_worktree: bool,
 }
 
@@ -1183,23 +1172,6 @@ impl Workspace {
 
     pub fn worktree_space(&self) -> Option<&WorktreeSpaceMembership> {
         self.worktree_space.as_ref()
-    }
-
-    /// Sidebar grouping identity. Herdr-recorded worktree provenance wins, and
-    /// otherwise the repo discovered from the workspace cwd, so checkouts Herdr
-    /// never opened itself still group with their siblings.
-    pub fn space_group(&self) -> Option<SpaceGroup<'_>> {
-        if let Some(space) = self.worktree_space.as_ref() {
-            return Some(SpaceGroup {
-                key: &space.key,
-                is_linked_worktree: space.is_linked_worktree,
-            });
-        }
-        let space = self.cached_git_space.as_ref()?;
-        Some(SpaceGroup {
-            key: &space.key,
-            is_linked_worktree: space.is_linked_worktree,
-        })
     }
 
     #[cfg(test)]

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Changed
+- Restored worktree-based space grouping and direct entry into linked worktrees.
+
 ## [0.8.2-fork.1] - 2026-08-22
 
 ### Added

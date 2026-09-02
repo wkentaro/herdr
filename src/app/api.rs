@@ -95,10 +95,9 @@ impl App {
         } else {
             self.last_git_remote_status_refresh = Instant::now();
         }
-        let mut changed = self
+        let changed = self
             .state
             .apply_workspace_git_statuses(&self.terminal_runtimes, results);
-        changed |= self.open_missing_primary_worktree_workspaces();
         if changed {
             self.render_dirty.request_generic();
             self.render_notify.notify_one();
