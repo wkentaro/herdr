@@ -312,7 +312,33 @@ impl AppState {
         };
 
         cards.iter().find_map(|card| {
-            (row >= card.rect.y && row < card.rect.y + card.rect.height).then_some(card.ws_idx)
+            (row >= card.rect.y && row < card.rect.y.saturating_add(card.workspace_height))
+                .then_some(card.ws_idx)
+        })
+    }
+
+    pub(super) fn find_sidebar_tab_target_at_row(
+        &self,
+        row: u16,
+    ) -> Option<(usize, crate::layout::PaneId)> {
+        let cards = if self.view.workspace_card_areas.is_empty() {
+            crate::ui::compute_workspace_card_areas(self, self.view.sidebar_rect)
+        } else {
+            self.view.workspace_card_areas.clone()
+        };
+
+        cards.iter().find_map(|card| {
+            if row >= card.rect.y.saturating_add(card.rect.height) {
+                return None;
+            }
+            let tab_idx =
+                row.checked_sub(card.rect.y.saturating_add(card.workspace_height))? as usize;
+            let workspace = self.workspaces.get(card.ws_idx)?;
+            if workspace.tabs.len() <= 1 {
+                return None;
+            }
+            let tab = workspace.tabs.get(tab_idx)?;
+            Some((card.ws_idx, tab.layout.focused()))
         })
     }
 
@@ -1209,6 +1235,32 @@ mod tests {
         let snapshot = capture_snapshot(&app.state);
         assert_eq!(snapshot.active, Some(1));
         assert_eq!(snapshot.selected, 1);
+    }
+
+    #[test]
+    fn clicking_sidebar_tab_switches_workspace_and_tab() {
+        let mut multi = Workspace::test_new("multi");
+        multi.tabs[0].set_custom_name("editor".into());
+        multi.test_add_tab(Some("tests"));
+
+        let mut app = app_for_mouse_test();
+        app.state.workspaces = vec![Workspace::test_new("single"), multi];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
+        let card = app.state.view.workspace_card_areas[1];
+        let tests_row = card.rect.y + card.workspace_height + 1;
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            card.rect.x + 4,
+            tests_row,
+        ));
+
+        assert_eq!(app.state.active, Some(1));
+        assert_eq!(app.state.selected, 1);
+        assert_eq!(app.state.workspaces[1].active_tab, 1);
+        assert!(app.state.workspace_presses.is_empty());
     }
 
     #[test]

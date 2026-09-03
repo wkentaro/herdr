@@ -651,6 +651,7 @@ impl Palette {
 pub struct WorkspaceCardArea {
     pub ws_idx: usize,
     pub rect: Rect,
+    pub workspace_height: u16,
     pub indented: bool,
 }
 
