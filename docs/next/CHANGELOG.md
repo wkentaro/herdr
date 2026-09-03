@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## [0.8.2-fork.2] - 2026-09-03
+
 ### Changed
 - Replaced automatic worktree-based Space grouping with persistent, one-level folders that users create, rename, reorder, and populate manually from the sidebar.
 
