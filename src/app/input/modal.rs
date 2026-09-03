@@ -74,6 +74,7 @@ pub(super) fn modal_action_from_buttons<A: Copy>(
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum GlobalMenuAction {
+    NewFolder,
     Detach,
     WhatsNew,
     Keybinds,
@@ -91,6 +92,9 @@ pub(super) fn global_menu_actions(state: &AppState) -> Vec<GlobalMenuAction> {
         actions.push(GlobalMenuAction::WhatsNew);
     }
     actions.push(GlobalMenuAction::Detach);
+    if state.view.layout != crate::app::state::ViewLayout::Mobile {
+        actions.push(GlobalMenuAction::NewFolder);
+    }
     actions
 }
 
@@ -130,6 +134,7 @@ pub(super) fn request_detach(state: &mut AppState) {
 
 pub(super) fn apply_global_menu_action(state: &mut AppState, action: GlobalMenuAction) {
     match action {
+        GlobalMenuAction::NewFolder => open_new_workspace_folder_dialog(state),
         GlobalMenuAction::Detach => {
             leave_modal(state);
             request_detach(state);
@@ -392,6 +397,23 @@ pub(crate) fn open_new_workspace_dialog(state: &mut AppState, cwd: std::path::Pa
     state.mode = Mode::RenameWorkspace;
 }
 
+pub(super) fn open_new_workspace_folder_dialog(state: &mut AppState) {
+    state.editing_folder_id = None;
+    state.name_input = "new folder".to_string();
+    state.name_input_replace_on_type = true;
+    state.mode = Mode::RenameWorkspaceFolder;
+}
+
+pub(super) fn open_rename_workspace_folder_dialog(state: &mut AppState, folder_id: String) {
+    let Some(folder) = state.workspace_layout.find_folder(&folder_id) else {
+        return;
+    };
+    state.name_input = folder.name.clone();
+    state.name_input_replace_on_type = false;
+    state.editing_folder_id = Some(folder_id);
+    state.mode = Mode::RenameWorkspaceFolder;
+}
+
 pub(super) fn open_rename_active_tab(state: &mut AppState, replace_on_type: bool) {
     state.creating_new_tab = false;
     state.requested_new_tab_name = None;
@@ -616,6 +638,34 @@ pub(crate) fn insert_rename_input_text(state: &mut AppState, text: &str) {
     state.name_input.push_str(text);
 }
 
+fn open_move_workspace_menu(state: &mut AppState, ws_idx: usize, x: u16, y: u16) {
+    let mut destinations = vec![crate::app::state::WorkspaceMoveDestination {
+        label: "Move to root".into(),
+        folder_id: None,
+        insert_index: state.workspace_layout.items.len(),
+    }];
+    destinations.extend(state.workspace_layout.items.iter().filter_map(|item| {
+        let crate::workspace_layout::WorkspaceLayoutItem::Folder(folder) = item else {
+            return None;
+        };
+        Some(crate::app::state::WorkspaceMoveDestination {
+            label: format!("Move to {}", folder.name),
+            folder_id: Some(folder.id.clone()),
+            insert_index: folder.workspace_ids.len(),
+        })
+    }));
+    state.context_menu = Some(ContextMenuState {
+        kind: ContextMenuKind::MoveWorkspace {
+            ws_idx,
+            destinations,
+        },
+        x,
+        y,
+        list: crate::app::state::MenuListState::new(0),
+    });
+    state.mode = Mode::ContextMenu;
+}
+
 fn delete_rename_input_char(state: &mut AppState) {
     if state.name_input_replace_on_type {
         clear_rename_input(state);
@@ -801,8 +851,21 @@ pub(super) fn apply_context_menu_action(
     menu: ContextMenuState,
     idx: usize,
 ) {
-    let item = menu.items().get(idx).copied();
-    match (menu.kind, item) {
+    let item = menu.items().get(idx).cloned();
+    let (x, y) = (menu.x, menu.y);
+    match (menu.kind, item.as_deref()) {
+        (ContextMenuKind::WorkspaceFolder { folder_id }, Some("New workspace here")) => {
+            state.pending_workspace_folder_id = Some(folder_id);
+            state.request_new_workspace = true;
+            leave_modal(state);
+        }
+        (ContextMenuKind::WorkspaceFolder { folder_id }, Some("Rename")) => {
+            open_rename_workspace_folder_dialog(state, folder_id);
+        }
+        (ContextMenuKind::WorkspaceFolder { folder_id }, Some("Delete folder")) => {
+            let _ = state.delete_workspace_folder(&folder_id);
+            leave_modal(state);
+        }
         (ContextMenuKind::GitWorkspace { ws_idx, .. }, Some("New worktree")) => {
             state.request_new_linked_worktree = Some(ws_idx);
             leave_modal(state);
@@ -816,27 +879,6 @@ pub(super) fn apply_context_menu_action(
             leave_modal(state);
         }
         (
-            ContextMenuKind::GitWorkspace {
-                ws_idx, collapsed, ..
-            },
-            Some("Collapse" | "Expand"),
-        ) => {
-            if let Some(key) = state
-                .workspaces
-                .get(ws_idx)
-                .and_then(|ws| ws.worktree_space())
-                .map(|space| space.key.clone())
-            {
-                if collapsed {
-                    state.collapsed_space_keys.remove(&key);
-                } else {
-                    state.collapsed_space_keys.insert(key);
-                }
-                state.mark_session_dirty();
-            }
-            leave_modal(state);
-        }
-        (
             ContextMenuKind::Workspace { ws_idx } | ContextMenuKind::GitWorkspace { ws_idx, .. },
             Some("Rename"),
         ) => {
@@ -844,7 +886,30 @@ pub(super) fn apply_context_menu_action(
         }
         (
             ContextMenuKind::Workspace { ws_idx } | ContextMenuKind::GitWorkspace { ws_idx, .. },
-            Some("Close" | "Close group"),
+            Some("Move…"),
+        ) => open_move_workspace_menu(state, ws_idx, x, y),
+        (
+            ContextMenuKind::MoveWorkspace {
+                ws_idx,
+                destinations,
+            },
+            Some(_),
+        ) => {
+            if let (Some(workspace), Some(destination)) =
+                (state.workspaces.get(ws_idx), destinations.get(idx))
+            {
+                let workspace_id = workspace.id.clone();
+                let _ = state.place_workspace_in_layout(
+                    &workspace_id,
+                    destination.folder_id.as_deref(),
+                    destination.insert_index,
+                );
+            }
+            leave_modal(state);
+        }
+        (
+            ContextMenuKind::Workspace { ws_idx } | ContextMenuKind::GitWorkspace { ws_idx, .. },
+            Some("Close"),
         ) => {
             state.selected = ws_idx;
             if state.confirm_close {
@@ -1051,12 +1116,14 @@ impl App {
                 if let Some(cwd) = self.state.pending_workspace_create_cwd.take() {
                     let suggested_name = crate::workspace::derive_label_from_cwd(&cwd);
                     let label = workspace_create_label(&new_name, &suggested_name);
+                    let folder_id = self.state.pending_workspace_folder_id.take();
                     self.runtime_workspace_create(
                         "tui.workspace.create_named",
                         crate::api::schema::WorkspaceCreateParams {
                             cwd: Some(cwd.display().to_string()),
                             focus: true,
                             label,
+                            folder_id,
                             env: Default::default(),
                         },
                     );
@@ -1070,6 +1137,20 @@ impl App {
                         },
                     );
                 }
+            }
+            Mode::RenameWorkspaceFolder if !new_name.is_empty() => {
+                let method = match self.state.editing_folder_id.clone() {
+                    Some(folder_id) => crate::api::schema::Method::WorkspaceFolderRename(
+                        crate::api::schema::WorkspaceFolderRenameParams {
+                            folder_id,
+                            name: new_name,
+                        },
+                    ),
+                    None => crate::api::schema::Method::WorkspaceFolderCreate(
+                        crate::api::schema::WorkspaceFolderCreateParams { name: new_name },
+                    ),
+                };
+                self.dispatch_runtime_mutation("tui.workspace.folder.save", method);
             }
             Mode::RenameTab if self.state.creating_new_tab => {
                 let default_name = next_new_tab_default_name(&self.state);
@@ -1133,6 +1214,7 @@ impl App {
         }
 
         cancel_rename_modal(&mut self.state);
+        self.state.editing_folder_id = None;
     }
 
     pub(super) fn apply_rename_mouse_action_via_api(&mut self, action: ModalAction) {
@@ -1243,8 +1325,26 @@ impl App {
     }
 
     pub(crate) fn apply_context_menu_action_via_api(&mut self, menu: ContextMenuState, idx: usize) {
-        let item = menu.items().get(idx).copied();
-        match (menu.kind, item) {
+        let item = menu.items().get(idx).cloned();
+        let (x, y) = (menu.x, menu.y);
+        match (menu.kind, item.as_deref()) {
+            (ContextMenuKind::WorkspaceFolder { folder_id }, Some("New workspace here")) => {
+                self.state.pending_workspace_folder_id = Some(folder_id);
+                leave_modal(&mut self.state);
+                self.begin_tui_workspace_create("tui.workspace.folder.create_workspace");
+            }
+            (ContextMenuKind::WorkspaceFolder { folder_id }, Some("Rename")) => {
+                open_rename_workspace_folder_dialog(&mut self.state, folder_id);
+            }
+            (ContextMenuKind::WorkspaceFolder { folder_id }, Some("Delete folder")) => {
+                self.dispatch_runtime_mutation(
+                    "tui.workspace.folder.delete",
+                    crate::api::schema::Method::WorkspaceFolderDelete(
+                        crate::api::schema::WorkspaceFolderTarget { folder_id },
+                    ),
+                );
+                leave_modal(&mut self.state);
+            }
             (ContextMenuKind::GitWorkspace { ws_idx, .. }, Some("New worktree")) => {
                 self.state.request_new_linked_worktree = Some(ws_idx);
                 leave_modal(&mut self.state);
@@ -1258,28 +1358,6 @@ impl App {
                 leave_modal(&mut self.state);
             }
             (
-                ContextMenuKind::GitWorkspace {
-                    ws_idx, collapsed, ..
-                },
-                Some("Collapse" | "Expand"),
-            ) => {
-                if let Some(key) = self
-                    .state
-                    .workspaces
-                    .get(ws_idx)
-                    .and_then(|ws| ws.worktree_space())
-                    .map(|space| space.key.clone())
-                {
-                    if collapsed {
-                        self.state.collapsed_space_keys.remove(&key);
-                    } else {
-                        self.state.collapsed_space_keys.insert(key);
-                    }
-                    self.state.mark_session_dirty();
-                }
-                leave_modal(&mut self.state);
-            }
-            (
                 ContextMenuKind::Workspace { ws_idx }
                 | ContextMenuKind::GitWorkspace { ws_idx, .. },
                 Some("Rename"),
@@ -1287,7 +1365,34 @@ impl App {
             (
                 ContextMenuKind::Workspace { ws_idx }
                 | ContextMenuKind::GitWorkspace { ws_idx, .. },
-                Some("Close" | "Close group"),
+                Some("Move…"),
+            ) => open_move_workspace_menu(&mut self.state, ws_idx, x, y),
+            (
+                ContextMenuKind::MoveWorkspace {
+                    ws_idx,
+                    destinations,
+                },
+                Some(_),
+            ) => {
+                if let (Some(workspace), Some(destination)) =
+                    (self.state.workspaces.get(ws_idx), destinations.get(idx))
+                {
+                    let workspace_id = workspace.id.clone();
+                    self.runtime_workspace_move(
+                        "tui.workspace.move_menu",
+                        crate::api::schema::WorkspaceMoveParams {
+                            workspace_id,
+                            folder_id: destination.folder_id.clone(),
+                            insert_index: destination.insert_index,
+                        },
+                    );
+                }
+                leave_modal(&mut self.state);
+            }
+            (
+                ContextMenuKind::Workspace { ws_idx }
+                | ContextMenuKind::GitWorkspace { ws_idx, .. },
+                Some("Close"),
             ) => {
                 self.state.selected = ws_idx;
                 if self.state.confirm_close {
@@ -1509,14 +1614,73 @@ mod tests {
         );
     }
 
-    fn mark_worktree_space_member(state: &mut AppState, ws_idx: usize, key: &str) {
-        state.workspaces[ws_idx].worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
-            key: key.into(),
-            label: "herdr".into(),
-            repo_root: "/repo/herdr".into(),
-            checkout_path: format!("/repo/worktree-{ws_idx}").into(),
-            is_linked_worktree: ws_idx != 0,
-        });
+    #[test]
+    fn workspace_context_menu_moves_workspace_into_named_folder() {
+        let mut state = state_with_workspaces(&["main", "notes"]);
+        state.normalize_workspace_layout();
+        let folder_id = state.create_workspace_folder("project".into()).unwrap();
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::Workspace { ws_idx: 0 },
+            x: 4,
+            y: 5,
+            list: MenuListState::new(0),
+        };
+        let move_idx = menu
+            .items()
+            .iter()
+            .position(|item| item == "Move…")
+            .unwrap();
+        let mut terminal_runtimes = crate::terminal::TerminalRuntimeRegistry::new();
+
+        apply_context_menu_action(&mut state, &mut terminal_runtimes, menu, move_idx);
+        let move_menu = state.context_menu.take().expect("move menu");
+        assert_eq!(move_menu.items(), ["Move to root", "Move to project"]);
+        apply_context_menu_action(&mut state, &mut terminal_runtimes, move_menu, 1);
+
+        assert_eq!(
+            state
+                .workspace_layout
+                .find_folder(&folder_id)
+                .expect("folder")
+                .workspace_ids
+                .len(),
+            1
+        );
+        let main_id = state
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.display_name() == "main")
+            .expect("main workspace")
+            .id
+            .clone();
+        assert_eq!(
+            state
+                .workspace_layout
+                .find_folder(&folder_id)
+                .expect("folder")
+                .workspace_ids,
+            [main_id]
+        );
+    }
+
+    #[test]
+    fn new_workspace_in_folder_keeps_name_prompt_open() {
+        let mut app = app_with_test_workspaces(&["main"]);
+        app.state.prompt_new_workspace_name = true;
+        app.apply_context_menu_action_via_api(
+            ContextMenuState {
+                kind: ContextMenuKind::WorkspaceFolder {
+                    folder_id: "f1".into(),
+                },
+                x: 0,
+                y: 0,
+                list: MenuListState::new(0),
+            },
+            0,
+        );
+
+        assert_eq!(app.state.mode, Mode::RenameWorkspace);
+        assert_eq!(app.state.pending_workspace_folder_id.as_deref(), Some("f1"));
     }
 
     #[test]
@@ -1613,6 +1777,14 @@ mod tests {
 
         std::env::remove_var(crate::config::CONFIG_PATH_ENV_VAR);
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn mobile_global_menu_does_not_offer_folder_editing() {
+        let mut state = state_with_workspaces(&["main"]);
+        state.view.layout = crate::app::state::ViewLayout::Mobile;
+
+        assert!(!global_menu_actions(&state).contains(&GlobalMenuAction::NewFolder));
     }
 
     #[test]
@@ -2270,7 +2442,7 @@ mod tests {
     }
 
     #[test]
-    fn context_menu_close_group_opens_group_close_confirmation() {
+    fn context_menu_close_on_parent_worktree_closes_only_that_workspace() {
         let mut state = state_with_workspaces(&["main", "issue"]);
         state.active = Some(0);
         state.selected = 1;
@@ -2292,8 +2464,6 @@ mod tests {
             kind: ContextMenuKind::GitWorkspace {
                 ws_idx: 0,
                 is_linked_worktree: false,
-                has_worktree_children: true,
-                collapsed: false,
             },
             x: 0,
             y: 0,
@@ -2301,15 +2471,21 @@ mod tests {
         };
         let mut terminal_runtimes = crate::terminal::TerminalRuntimeRegistry::new();
 
-        apply_context_menu_action(&mut state, &mut terminal_runtimes, menu, 1);
+        let close_idx = menu
+            .items()
+            .iter()
+            .position(|item| item == "Close")
+            .unwrap();
+        apply_context_menu_action(&mut state, &mut terminal_runtimes, menu, close_idx);
 
         assert_eq!(state.selected, 0);
         assert_eq!(state.mode, Mode::ConfirmClose);
 
         confirm_close_accept(&mut state);
 
-        assert!(state.workspaces.is_empty());
-        assert_eq!(state.mode, Mode::Navigate);
+        assert_eq!(state.workspaces.len(), 1);
+        assert_eq!(state.workspaces[0].display_name(), "issue");
+        assert_eq!(state.mode, Mode::Terminal);
     }
 
     #[test]
@@ -2343,120 +2519,5 @@ mod tests {
                 .unwrap()
                 .right_click_passthrough
         );
-    }
-
-    #[test]
-    fn context_menu_close_pane_last_parent_group_pane_keeps_confirmation_mode() {
-        let mut state = state_with_workspaces(&["main", "issue"]);
-        state.active = Some(0);
-        state.selected = 1;
-        state.workspaces[0].worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
-            key: "repo-key".into(),
-            label: "herdr".into(),
-            repo_root: "/repo/herdr".into(),
-            checkout_path: "/repo/herdr".into(),
-            is_linked_worktree: false,
-        });
-        state.workspaces[1].worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
-            key: "repo-key".into(),
-            label: "herdr".into(),
-            repo_root: "/repo/herdr".into(),
-            checkout_path: "/repo/herdr-issue".into(),
-            is_linked_worktree: true,
-        });
-        let pane_id = state.workspaces[0].tabs[0].root_pane;
-        let menu = ContextMenuState {
-            kind: ContextMenuKind::Pane {
-                ws_idx: 0,
-                tab_idx: 0,
-                pane_id,
-                source_pane_id: None,
-                has_manual_label: false,
-                right_click_passthrough: false,
-            },
-            x: 0,
-            y: 0,
-            list: MenuListState::new(0),
-        };
-        let idx = menu
-            .items()
-            .iter()
-            .position(|item| *item == "Close pane")
-            .expect("close pane item");
-        let mut terminal_runtimes = crate::terminal::TerminalRuntimeRegistry::new();
-
-        apply_context_menu_action(&mut state, &mut terminal_runtimes, menu, idx);
-
-        assert_eq!(state.selected, 0);
-        assert_eq!(state.mode, Mode::ConfirmClose);
-        assert_eq!(state.workspaces.len(), 2);
-    }
-
-    #[test]
-    fn api_context_menu_close_tab_last_parent_group_workspace_keeps_confirmation_mode() {
-        let mut app = app_with_test_workspaces(&["main", "issue"]);
-        mark_worktree_space_member(&mut app.state, 0, "repo-key");
-        mark_worktree_space_member(&mut app.state, 1, "repo-key");
-        app.state.active = Some(0);
-        app.state.selected = 1;
-        app.state.mode = Mode::ContextMenu;
-        let menu = ContextMenuState {
-            kind: ContextMenuKind::Tab {
-                ws_idx: 0,
-                tab_idx: 0,
-            },
-            x: 0,
-            y: 0,
-            list: MenuListState::new(0),
-        };
-        let idx = menu
-            .items()
-            .iter()
-            .position(|item| *item == "Close")
-            .expect("close tab item");
-
-        app.apply_context_menu_action_via_api(menu, idx);
-
-        assert_eq!(app.state.selected, 0);
-        assert_eq!(app.state.mode, Mode::ConfirmClose);
-        assert_eq!(app.state.workspaces.len(), 2);
-    }
-
-    #[test]
-    fn api_context_menu_enter_close_pane_last_parent_group_pane_keeps_confirmation_mode() {
-        let mut app = app_with_test_workspaces(&["main", "issue"]);
-        mark_worktree_space_member(&mut app.state, 0, "repo-key");
-        mark_worktree_space_member(&mut app.state, 1, "repo-key");
-        app.state.active = Some(0);
-        app.state.selected = 1;
-        app.state.mode = Mode::ContextMenu;
-        let pane_id = app.state.workspaces[0].tabs[0].root_pane;
-        let mut menu = ContextMenuState {
-            kind: ContextMenuKind::Pane {
-                ws_idx: 0,
-                tab_idx: 0,
-                pane_id,
-                source_pane_id: None,
-                has_manual_label: false,
-                right_click_passthrough: false,
-            },
-            x: 0,
-            y: 0,
-            list: MenuListState::new(0),
-        };
-        let close_idx = menu
-            .items()
-            .iter()
-            .position(|item| *item == "Close pane")
-            .expect("close pane item");
-        menu.list.highlighted = close_idx;
-        app.state.context_menu = Some(menu);
-
-        app.handle_context_menu_key_via_api(KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()));
-
-        assert_eq!(app.state.selected, 0);
-        assert_eq!(app.state.mode, Mode::ConfirmClose);
-        assert_eq!(app.state.workspaces.len(), 2);
-        assert!(app.state.context_menu.is_none());
     }
 }

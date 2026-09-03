@@ -480,6 +480,7 @@ mod tests {
         crate::persist::SessionSnapshot {
             version: 0,
             workspaces: Vec::new(),
+            workspace_layout: Default::default(),
             active: None,
             selected: 0,
             sidebar_width: None,

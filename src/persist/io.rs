@@ -202,6 +202,7 @@ mod tests {
         SessionSnapshot {
             version: SNAPSHOT_VERSION,
             workspaces: vec![],
+            workspace_layout: Default::default(),
             active: None,
             selected: 0,
             sidebar_width: Some(26),

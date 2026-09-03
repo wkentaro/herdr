@@ -128,6 +128,13 @@ impl App {
         let key = raw_key.as_key_event();
         self.state.update_dismissed = true;
 
+        if key.code == KeyCode::Enter {
+            if let Some(folder_id) = self.state.selected_folder_id.clone() {
+                self.state.toggle_workspace_folder(&folder_id);
+                return;
+            }
+        }
+
         if key.code == KeyCode::Esc || self.state.is_prefix_key(&raw_key) {
             leave_navigate_mode(&mut self.state);
             return;
@@ -213,6 +220,10 @@ impl App {
                 }
             }
             NavigateAction::RenameWorkspace => {
+                if let Some(folder_id) = self.state.selected_folder_id.clone() {
+                    super::modal::open_rename_workspace_folder_dialog(&mut self.state, folder_id);
+                    return;
+                }
                 if let Some(ws_idx) = workspace_action_target(&self.state, context) {
                     super::modal::open_rename_workspace(
                         &mut self.state,
@@ -222,6 +233,15 @@ impl App {
                 }
             }
             NavigateAction::CloseWorkspace => {
+                if let Some(folder_id) = self.state.selected_folder_id.take() {
+                    self.dispatch_runtime_mutation(
+                        "tui.workspace.folder.delete",
+                        crate::api::schema::Method::WorkspaceFolderDelete(
+                            crate::api::schema::WorkspaceFolderTarget { folder_id },
+                        ),
+                    );
+                    return;
+                }
                 if let Some(ws_idx) = workspace_action_target(&self.state, context) {
                     self.state.selected = ws_idx;
                     if self.state.confirm_close {
@@ -464,22 +484,21 @@ impl App {
         self.runtime_workspace_close("tui.workspace.close", workspace_id);
     }
 
-    pub(crate) fn move_workspace_via_api(&mut self, source_ws_idx: usize, insert_idx: usize) {
+    pub(crate) fn move_workspace_to_via_api(
+        &mut self,
+        source_ws_idx: usize,
+        folder_id: Option<String>,
+        insert_idx: usize,
+    ) {
         let workspace_id = self.public_workspace_id(source_ws_idx);
         self.runtime_workspace_move(
             "tui.workspace.move",
             crate::api::schema::WorkspaceMoveParams {
                 workspace_id,
+                folder_id,
                 insert_index: insert_idx,
             },
         );
-    }
-
-    pub(crate) fn move_workspace_block_via_api(
-        &mut self,
-        params: crate::api::schema::WorkspaceMoveBlockParams,
-    ) {
-        self.runtime_workspace_move_block("tui.workspace.move_block", params);
     }
 
     pub(crate) fn focus_tab_idx_via_api(&mut self, tab_idx: usize) {
@@ -502,9 +521,6 @@ impl App {
             .get(ws_idx)
             .is_some_and(|ws| ws.tabs.len() <= 1)
         {
-            if self.state.confirm_implicit_worktree_group_close(ws_idx) {
-                return true;
-            }
             self.close_workspace_idx_via_api(ws_idx);
             return false;
         }
@@ -1231,6 +1247,10 @@ pub(super) fn handle_navigate_reserved_key(state: &mut AppState, key: TerminalKe
     if modifiers.is_empty() {
         match code {
             KeyCode::Enter => {
+                if let Some(folder_id) = state.selected_folder_id.clone() {
+                    state.toggle_workspace_folder(&folder_id);
+                    return true;
+                }
                 if !state.workspaces.is_empty() {
                     state.switch_workspace(state.selected);
                     leave_navigate_mode(state);
@@ -2357,10 +2377,22 @@ mod tests {
     }
 
     #[test]
-    fn navigate_down_follows_grouped_sidebar_visual_order() {
+    fn navigate_down_follows_folder_sidebar_order() {
         let mut state = state_with_workspaces(&["main", "normal", "issue"]);
-        mark_worktree_space_member(&mut state, 0, "repo-key");
-        mark_worktree_space_member(&mut state, 2, "repo-key");
+        let main_id = state.workspaces[0].id.clone();
+        let normal_id = state.workspaces[1].id.clone();
+        let issue_id = state.workspaces[2].id.clone();
+        state.workspace_layout.items = vec![
+            crate::workspace_layout::WorkspaceLayoutItem::Folder(
+                crate::workspace_layout::WorkspaceFolder {
+                    id: "f1".into(),
+                    name: "project".into(),
+                    workspace_ids: vec![main_id, issue_id],
+                },
+            ),
+            crate::workspace_layout::WorkspaceLayoutItem::Workspace(normal_id),
+        ];
+        state.normalize_workspace_layout();
         state.mode = Mode::Navigate;
         state.active = Some(0);
         state.selected = 0;
@@ -2370,33 +2402,33 @@ mod tests {
             KeyEvent::new(KeyCode::Down, KeyModifiers::empty()),
         );
 
-        assert_eq!(state.selected, 2);
+        assert_eq!(state.selected, 1);
     }
 
     #[test]
-    fn navigate_number_keys_follow_grouped_sidebar_visual_order() {
+    fn navigate_enter_toggles_selected_folder() {
         let mut state = state_with_workspaces(&["main", "normal", "issue"]);
-        mark_worktree_space_member(&mut state, 0, "repo-key");
-        mark_worktree_space_member(&mut state, 2, "repo-key");
+        state.normalize_workspace_layout();
+        let folder_id = state.create_workspace_folder("project".into()).unwrap();
+        let workspace_id = state.workspaces[0].id.clone();
+        state
+            .place_workspace_in_layout(&workspace_id, Some(&folder_id), 0)
+            .unwrap();
         state.mode = Mode::Navigate;
-        state.active = Some(0);
-        state.selected = 0;
+        state.selected_folder_id = Some(folder_id.clone());
 
         handle_navigate_key(
             &mut state,
-            KeyEvent::new(KeyCode::Char('2'), KeyModifiers::empty()),
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()),
         );
 
-        assert_eq!(state.active, Some(2));
-        assert_eq!(state.selected, 2);
+        assert!(state.collapsed_folder_ids.contains(&folder_id));
     }
 
     #[test]
-    fn indexed_switch_workspace_keybind_follows_grouped_sidebar_visual_order() {
+    fn indexed_switch_workspace_keybind_uses_canonical_workspace_order() {
         let mut state = state_with_workspaces(&["main", "normal", "issue"]);
         let mut terminal_runtimes = TerminalRuntimeRegistry::new();
-        mark_worktree_space_member(&mut state, 0, "repo-key");
-        mark_worktree_space_member(&mut state, 2, "repo-key");
         state.mode = Mode::Prefix;
         state.active = Some(0);
         state.selected = 0;
@@ -2408,8 +2440,8 @@ mod tests {
             ActionContext::Prefix,
         );
 
-        assert_eq!(state.active, Some(2));
-        assert_eq!(state.selected, 2);
+        assert_eq!(state.active, Some(1));
+        assert_eq!(state.selected, 1);
     }
 
     #[test]
@@ -3458,54 +3490,6 @@ navigate_pane_down = "ctrl+j"
         assert_eq!(state.workspaces.len(), 1);
         assert_eq!(state.workspaces[0].display_name(), "main");
         assert_eq!(state.mode, Mode::Terminal);
-    }
-
-    #[test]
-    fn prefix_close_pane_last_parent_group_pane_opens_confirmation() {
-        let mut state = state_with_workspaces(&["main", "issue"]);
-        mark_worktree_space_member(&mut state, 0, "repo-key");
-        mark_worktree_space_member(&mut state, 1, "repo-key");
-        state.selected = 1;
-        state.active = Some(0);
-        state.mode = Mode::Navigate;
-
-        execute_navigate_action(&mut state, NavigateAction::ClosePane);
-
-        assert_eq!(state.selected, 0);
-        assert_eq!(state.mode, Mode::ConfirmClose);
-        assert_eq!(state.workspaces.len(), 2);
-    }
-
-    #[test]
-    fn tui_close_tab_last_parent_group_workspace_opens_confirmation_via_api() {
-        let mut app = app_with_test_workspaces(&["main", "issue"]);
-        mark_worktree_space_member(&mut app.state, 0, "repo-key");
-        mark_worktree_space_member(&mut app.state, 1, "repo-key");
-        app.state.active = Some(0);
-        app.state.selected = 1;
-        app.state.mode = Mode::Navigate;
-
-        app.execute_tui_navigate_action(NavigateAction::CloseTab, ActionContext::Navigate);
-
-        assert_eq!(app.state.selected, 0);
-        assert_eq!(app.state.mode, Mode::ConfirmClose);
-        assert_eq!(app.state.workspaces.len(), 2);
-    }
-
-    #[test]
-    fn tui_close_pane_last_parent_group_pane_opens_confirmation_via_api() {
-        let mut app = app_with_test_workspaces(&["main", "issue"]);
-        mark_worktree_space_member(&mut app.state, 0, "repo-key");
-        mark_worktree_space_member(&mut app.state, 1, "repo-key");
-        app.state.active = Some(0);
-        app.state.selected = 1;
-        app.state.mode = Mode::Navigate;
-
-        app.execute_tui_navigate_action(NavigateAction::ClosePane, ActionContext::Navigate);
-
-        assert_eq!(app.state.selected, 0);
-        assert_eq!(app.state.mode, Mode::ConfirmClose);
-        assert_eq!(app.state.workspaces.len(), 2);
     }
 
     #[cfg(unix)]

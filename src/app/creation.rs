@@ -107,12 +107,14 @@ impl App {
             return;
         }
 
+        let folder_id = self.state.pending_workspace_folder_id.take();
         self.runtime_workspace_create(
             request_id,
             crate::api::schema::WorkspaceCreateParams {
                 cwd: None,
                 focus: true,
                 label: None,
+                folder_id,
                 env: Default::default(),
             },
         );
@@ -259,8 +261,7 @@ impl App {
         )?;
         self.terminal_runtimes.insert(terminal.id.clone(), runtime);
         self.state.terminals.insert(terminal.id.clone(), terminal);
-        self.state.workspaces.push(ws);
-        let idx = self.state.workspaces.len() - 1;
+        let idx = self.state.push_workspace(ws);
         self.state
             .remove_alias_shadowed_by_new_pane(self.state.workspaces[idx].tabs[0].root_pane);
         let workspace_id = self.state.workspaces[idx].id.clone();

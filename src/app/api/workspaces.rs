@@ -2,8 +2,9 @@ use std::path::PathBuf;
 
 use crate::api::schema::{
     EventData, EventEnvelope, EventKind, ResponseResult, WorkspaceCreateParams,
-    WorkspaceMoveBlockParams, WorkspaceMoveParams, WorkspaceRenameParams,
-    WorkspaceReportMetadataParams, WorkspaceTarget,
+    WorkspaceFolderCreateParams, WorkspaceFolderMoveParams, WorkspaceFolderRenameParams,
+    WorkspaceFolderTarget, WorkspaceLayoutInfo, WorkspaceLayoutItemInfo, WorkspaceMoveBlockParams,
+    WorkspaceMoveParams, WorkspaceRenameParams, WorkspaceReportMetadataParams, WorkspaceTarget,
 };
 use crate::app::App;
 
@@ -16,6 +17,7 @@ impl App {
             id,
             ResponseResult::WorkspaceList {
                 workspaces: self.workspace_list_info(),
+                workspace_layout: self.workspace_layout_info(),
             },
         )
     }
@@ -41,6 +43,14 @@ impl App {
         id: String,
         params: WorkspaceCreateParams,
     ) -> String {
+        if params
+            .folder_id
+            .as_deref()
+            .is_some_and(|folder_id| self.state.workspace_layout.find_folder(folder_id).is_none())
+        {
+            return encode_error(id, "workspace_folder_not_found", "folder not found");
+        }
+        let folder_id = params.folder_id.clone();
         let cwd = params.cwd.map(PathBuf::from).unwrap_or_else(|| {
             let follow_cwd = self.workspace_creation_source().and_then(|ws_idx| {
                 self.focused_pane_cwd_in_workspace(ws_idx)
@@ -60,7 +70,23 @@ impl App {
                         crate::logging::workspace_renamed(&workspace.id);
                     }
                 }
+                if let Some(folder_id) = folder_id.as_deref() {
+                    let insert_index = self
+                        .state
+                        .workspace_layout
+                        .find_folder(folder_id)
+                        .map_or(0, |folder| folder.workspace_ids.len());
+                    let workspace_id = self.state.workspaces[index].id.clone();
+                    let _ = self.state.place_workspace_in_layout(
+                        &workspace_id,
+                        Some(folder_id),
+                        insert_index,
+                    );
+                }
                 self.emit_workspace_open_events(index);
+                if folder_id.is_some() {
+                    self.emit_workspace_layout_updated();
+                }
                 encode_success(
                     id,
                     self.workspace_created_result(index)
@@ -129,17 +155,18 @@ impl App {
         if self.state.workspaces.get(index).is_none() {
             return workspace_not_found(id, &params.workspace_id);
         }
-        if params.insert_index > self.state.workspaces.len() {
-            return encode_error(
-                id,
-                "workspace_move_failed",
-                format!("insert_index {} is out of bounds", params.insert_index),
-            );
-        }
-
         let workspace_id = self.public_workspace_id(index);
         let insert_index = params.insert_index;
-        let moved = self.state.move_workspace(index, insert_index);
+        let folder_id = params.folder_id.as_deref();
+        let internal_workspace_id = self.state.workspaces[index].id.clone();
+        let moved = match self.state.place_workspace_in_layout(
+            &internal_workspace_id,
+            folder_id,
+            insert_index,
+        ) {
+            Ok(moved) => moved,
+            Err(error) => return workspace_layout_error(id, "workspace_move_failed", error),
+        };
         let workspaces = self.workspace_list_info();
         if moved {
             self.emit_event(EventEnvelope {
@@ -150,9 +177,16 @@ impl App {
                     workspaces: workspaces.clone(),
                 },
             });
+            self.emit_workspace_layout_updated();
         }
 
-        encode_success(id, ResponseResult::WorkspaceList { workspaces })
+        encode_success(
+            id,
+            ResponseResult::WorkspaceList {
+                workspaces,
+                workspace_layout: self.workspace_layout_info(),
+            },
+        )
     }
 
     pub(super) fn handle_workspace_move_block(
@@ -209,7 +243,8 @@ impl App {
 
         let moved = self
             .state
-            .move_workspace_block(&workspace_ids, before_workspace_id.as_deref());
+            .place_workspaces_at_layout_root(&workspace_ids, before_workspace_id.as_deref())
+            .unwrap_or(false);
         let workspaces = self.workspace_list_info();
         if moved {
             self.emit_event(EventEnvelope {
@@ -220,9 +255,115 @@ impl App {
                     workspaces: workspaces.clone(),
                 },
             });
+            self.emit_workspace_layout_updated();
         }
 
-        encode_success(id, ResponseResult::WorkspaceList { workspaces })
+        encode_success(
+            id,
+            ResponseResult::WorkspaceList {
+                workspaces,
+                workspace_layout: self.workspace_layout_info(),
+            },
+        )
+    }
+
+    pub(super) fn handle_workspace_folder_create(
+        &mut self,
+        id: String,
+        params: WorkspaceFolderCreateParams,
+    ) -> String {
+        if let Err(error) = self.state.create_workspace_folder(params.name) {
+            return workspace_layout_error(id, "workspace_folder_create_failed", error);
+        }
+        self.finish_workspace_layout_change(id)
+    }
+
+    pub(super) fn handle_workspace_folder_rename(
+        &mut self,
+        id: String,
+        params: WorkspaceFolderRenameParams,
+    ) -> String {
+        if let Err(error) = self
+            .state
+            .rename_workspace_folder(&params.folder_id, params.name)
+        {
+            return workspace_layout_error(id, "workspace_folder_rename_failed", error);
+        }
+        self.finish_workspace_layout_change(id)
+    }
+
+    pub(super) fn handle_workspace_folder_delete(
+        &mut self,
+        id: String,
+        params: WorkspaceFolderTarget,
+    ) -> String {
+        if let Err(error) = self.state.delete_workspace_folder(&params.folder_id) {
+            return workspace_layout_error(id, "workspace_folder_delete_failed", error);
+        }
+        self.finish_workspace_layout_change(id)
+    }
+
+    pub(super) fn handle_workspace_folder_move(
+        &mut self,
+        id: String,
+        params: WorkspaceFolderMoveParams,
+    ) -> String {
+        if let Err(error) = self
+            .state
+            .move_workspace_folder(&params.folder_id, params.insert_index)
+        {
+            return workspace_layout_error(id, "workspace_folder_move_failed", error);
+        }
+        self.finish_workspace_layout_change(id)
+    }
+
+    fn finish_workspace_layout_change(&mut self, id: String) -> String {
+        self.schedule_session_save();
+        let workspaces = self.workspace_list_info();
+        let workspace_layout = self.workspace_layout_info();
+        self.emit_workspace_layout_updated();
+        encode_success(
+            id,
+            ResponseResult::WorkspaceList {
+                workspaces,
+                workspace_layout,
+            },
+        )
+    }
+
+    pub(crate) fn workspace_layout_info(&self) -> WorkspaceLayoutInfo {
+        WorkspaceLayoutInfo {
+            items: self
+                .state
+                .workspace_layout
+                .items
+                .iter()
+                .map(|item| match item {
+                    crate::workspace_layout::WorkspaceLayoutItem::Workspace(workspace_id) => {
+                        WorkspaceLayoutItemInfo::Workspace {
+                            workspace_id: workspace_id.clone(),
+                        }
+                    }
+                    crate::workspace_layout::WorkspaceLayoutItem::Folder(folder) => {
+                        WorkspaceLayoutItemInfo::Folder {
+                            folder_id: folder.id.clone(),
+                            name: folder.name.clone(),
+                            workspace_ids: folder.workspace_ids.clone(),
+                        }
+                    }
+                })
+                .collect(),
+        }
+    }
+
+    pub(crate) fn emit_workspace_layout_updated(&mut self) {
+        self.emit_event(EventEnvelope {
+            event: EventKind::WorkspaceLayoutUpdated,
+            data: EventData::WorkspaceLayoutUpdated {
+                workspace_layout: self.workspace_layout_info(),
+                workspaces: self.workspace_list_info(),
+            },
+        });
     }
 
     pub(super) fn handle_workspace_report_metadata(
@@ -326,6 +467,7 @@ impl App {
                 workspace: Some(workspace),
             },
         });
+        self.emit_workspace_layout_updated();
 
         encode_success(id, ResponseResult::Ok {})
     }
@@ -346,6 +488,28 @@ fn workspace_not_found(id: String, workspace_id: &str) -> String {
         "workspace_not_found",
         format!("workspace {workspace_id} not found"),
     )
+}
+
+fn workspace_layout_error(
+    id: String,
+    code: &str,
+    error: crate::workspace_layout::WorkspaceLayoutError,
+) -> String {
+    let message = match error {
+        crate::workspace_layout::WorkspaceLayoutError::EmptyFolderName => {
+            "folder name must not be blank".to_string()
+        }
+        crate::workspace_layout::WorkspaceLayoutError::FolderNotFound => {
+            "folder not found".to_string()
+        }
+        crate::workspace_layout::WorkspaceLayoutError::WorkspaceNotFound => {
+            "workspace not found".to_string()
+        }
+        crate::workspace_layout::WorkspaceLayoutError::InsertIndexOutOfBounds => {
+            "insert_index is out of bounds".to_string()
+        }
+    };
+    encode_error(id, code, message)
 }
 
 #[cfg(test)]
@@ -413,6 +577,7 @@ mod tests {
                 cwd: None,
                 focus: false,
                 label: None,
+                folder_id: None,
                 env: Default::default(),
             },
         );
@@ -607,12 +772,13 @@ mod tests {
             "req".into(),
             WorkspaceMoveParams {
                 workspace_id: moved_id.clone(),
+                folder_id: None,
                 insert_index: 3,
             },
         );
 
         let success: SuccessResponse = serde_json::from_str(&response).unwrap();
-        let ResponseResult::WorkspaceList { workspaces } = success.result else {
+        let ResponseResult::WorkspaceList { workspaces, .. } = success.result else {
             panic!("expected workspace list");
         };
         assert_eq!(workspaces[2].workspace_id, moved_id);
@@ -655,7 +821,7 @@ mod tests {
         );
 
         let success: SuccessResponse = serde_json::from_str(&response).unwrap();
-        let ResponseResult::WorkspaceList { workspaces } = success.result else {
+        let ResponseResult::WorkspaceList { workspaces, .. } = success.result else {
             panic!("expected workspace list");
         };
         assert_eq!(
@@ -669,7 +835,7 @@ mod tests {
         assert_eq!(workspaces[1].workspace_id, parent_id);
         assert_eq!(workspaces[2].workspace_id, child_id);
         let events = event_hub.events_after(0);
-        assert_eq!(events.len(), 1);
+        assert_eq!(events.len(), 2);
         assert!(matches!(
             &events[0].1.data,
             EventData::WorkspaceReordered {
@@ -696,15 +862,100 @@ mod tests {
             "req".into(),
             WorkspaceMoveParams {
                 workspace_id: moved_id.clone(),
+                folder_id: None,
                 insert_index: 1,
             },
         );
 
         let success: SuccessResponse = serde_json::from_str(&response).unwrap();
-        let ResponseResult::WorkspaceList { workspaces } = success.result else {
+        let ResponseResult::WorkspaceList { workspaces, .. } = success.result else {
             panic!("expected workspace list");
         };
         assert_eq!(workspaces[0].workspace_id, moved_id);
         assert!(event_hub.events_after(0).is_empty());
+    }
+
+    #[test]
+    fn api_workspace_folder_lifecycle_preserves_children() {
+        let event_hub = crate::api::EventHub::default();
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(&Config::default(), true, None, api_rx, event_hub.clone());
+        app.state.workspaces = vec![Workspace::test_new("one"), Workspace::test_new("two")];
+        app.state.normalize_workspace_layout();
+        let workspace_id = app.public_workspace_id(0);
+
+        let response = app.handle_workspace_folder_create(
+            "create".into(),
+            WorkspaceFolderCreateParams {
+                name: "  project  ".into(),
+            },
+        );
+        let success: SuccessResponse = serde_json::from_str(&response).unwrap();
+        let ResponseResult::WorkspaceList {
+            workspace_layout, ..
+        } = success.result
+        else {
+            panic!("expected workspace list");
+        };
+        let WorkspaceLayoutItemInfo::Folder {
+            folder_id, name, ..
+        } = workspace_layout.items.last().unwrap()
+        else {
+            panic!("expected folder");
+        };
+        assert_eq!(name, "project");
+        let folder_id = folder_id.clone();
+
+        let response = app.handle_workspace_move(
+            "move".into(),
+            WorkspaceMoveParams {
+                workspace_id,
+                folder_id: Some(folder_id.clone()),
+                insert_index: 0,
+            },
+        );
+        let _: SuccessResponse = serde_json::from_str(&response).unwrap();
+        assert_eq!(
+            app.state
+                .workspace_layout
+                .find_folder(&folder_id)
+                .unwrap()
+                .workspace_ids
+                .len(),
+            1
+        );
+
+        let response = app
+            .handle_workspace_folder_delete("delete".into(), WorkspaceFolderTarget { folder_id });
+        let _: SuccessResponse = serde_json::from_str(&response).unwrap();
+        assert_eq!(app.state.workspaces.len(), 2);
+        assert!(app.state.workspace_layout.items.iter().all(|item| matches!(
+            item,
+            crate::workspace_layout::WorkspaceLayoutItem::Workspace(_)
+        )));
+        assert!(event_hub
+            .events_after(0)
+            .iter()
+            .any(|(_, event)| { event.event == EventKind::WorkspaceLayoutUpdated }));
+    }
+
+    #[test]
+    fn api_workspace_folder_rejects_blank_name() {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+
+        let response = app.handle_workspace_folder_create(
+            "create".into(),
+            WorkspaceFolderCreateParams { name: "   ".into() },
+        );
+        let error: crate::api::schema::ErrorResponse = serde_json::from_str(&response).unwrap();
+
+        assert_eq!(error.error.code, "workspace_folder_create_failed");
     }
 }

@@ -71,6 +71,8 @@ pub(crate) struct ClientConnection {
     pub(crate) host_keyboard_report_all_active: Option<bool>,
     /// Temporary files staged from this client's local clipboard image pastes.
     pub(crate) staged_clipboard_files: Vec<PathBuf>,
+    /// Folder collapse is presentation state and starts expanded on every attachment.
+    pub(crate) collapsed_workspace_folder_ids: std::collections::HashSet<String>,
     /// Channels for sending framed ServerMessage data to the client writer thread.
     pub(crate) writer: Option<ClientWriter>,
 }
@@ -136,6 +138,7 @@ impl ClientConnection {
             host_sgr_pixels_active: None,
             host_keyboard_report_all_active: None,
             staged_clipboard_files: Vec::new(),
+            collapsed_workspace_folder_ids: std::collections::HashSet::new(),
             writer,
         }
     }

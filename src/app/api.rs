@@ -1046,6 +1046,18 @@ impl App {
             Method::WorkspaceMoveBlock(params) => {
                 return self.handle_workspace_move_block(request.id, params);
             }
+            Method::WorkspaceFolderCreate(params) => {
+                return self.handle_workspace_folder_create(request.id, params);
+            }
+            Method::WorkspaceFolderRename(params) => {
+                return self.handle_workspace_folder_rename(request.id, params);
+            }
+            Method::WorkspaceFolderDelete(params) => {
+                return self.handle_workspace_folder_delete(request.id, params);
+            }
+            Method::WorkspaceFolderMove(params) => {
+                return self.handle_workspace_folder_move(request.id, params);
+            }
             Method::WorkspaceReportMetadata(params) => {
                 return self.handle_workspace_report_metadata(request.id, params);
             }

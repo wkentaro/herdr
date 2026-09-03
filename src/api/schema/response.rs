@@ -18,7 +18,7 @@ use super::plugins::{
 use super::server::ServerCapabilities;
 use super::session::SessionSnapshot;
 use super::tabs::TabInfo;
-use super::workspaces::WorkspaceInfo;
+use super::workspaces::{WorkspaceInfo, WorkspaceLayoutInfo};
 use super::worktrees::{WorktreeInfo, WorktreeSourceInfo};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -61,6 +61,8 @@ pub enum ResponseResult {
     },
     WorkspaceList {
         workspaces: Vec<WorkspaceInfo>,
+        #[serde(default)]
+        workspace_layout: WorkspaceLayoutInfo,
     },
     WorktreeList {
         source: WorktreeSourceInfo,

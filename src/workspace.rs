@@ -194,7 +194,7 @@ pub struct Workspace {
     pub(crate) cached_git_ahead_behind: Option<(usize, usize)>,
     /// Cached derived Git repo metadata for worktree actions and status display.
     pub(crate) cached_git_space: Option<GitSpaceMetadata>,
-    /// Explicit Herdr-managed worktree grouping provenance.
+    /// Explicit Herdr-managed worktree provenance.
     pub worktree_space: Option<WorktreeSpaceMembership>,
     pub(crate) metadata_tokens: crate::metadata_tokens::MetadataTokens,
     pub(crate) metadata_token_sequences: HashMap<String, u64>,

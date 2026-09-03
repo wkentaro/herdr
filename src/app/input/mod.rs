@@ -100,9 +100,10 @@ impl App {
                 Mode::ReleaseNotes => self.handle_release_notes_key(key_event),
                 Mode::ProductAnnouncement => self.handle_product_announcement_key(key_event),
                 Mode::Prefix | Mode::Navigate | Mode::Copy => unreachable!(),
-                Mode::RenameWorkspace | Mode::RenameTab | Mode::RenamePane => {
-                    self.handle_rename_key_via_api(key_event)
-                }
+                Mode::RenameWorkspace
+                | Mode::RenameWorkspaceFolder
+                | Mode::RenameTab
+                | Mode::RenamePane => self.handle_rename_key_via_api(key_event),
                 Mode::NewLinkedWorktree => self.handle_worktree_create_key(key_event),
                 Mode::OpenExistingWorktree => self.handle_worktree_open_key(key_event),
                 Mode::ConfirmRemoveWorktree => self.handle_worktree_remove_key(key_event),
@@ -210,7 +211,10 @@ impl App {
 
     pub(crate) fn paste_into_active_text_input(&mut self, text: &str) -> bool {
         match self.state.mode {
-            Mode::RenameWorkspace | Mode::RenameTab | Mode::RenamePane => {
+            Mode::RenameWorkspace
+            | Mode::RenameWorkspaceFolder
+            | Mode::RenameTab
+            | Mode::RenamePane => {
                 insert_rename_input_text(&mut self.state, text);
                 true
             }
@@ -401,6 +405,9 @@ impl App {
                     MouseAction::NewWorkspace => {
                         self.begin_tui_workspace_create("tui.mouse.workspace.create")
                     }
+                    MouseAction::ToggleWorkspaceFolder { folder_id } => {
+                        self.state.toggle_workspace_folder(&folder_id);
+                    }
                     MouseAction::Settings(action) => match action {
                         SettingsAction::SaveTheme(name) => self.save_theme(&name),
                         SettingsAction::SaveStatusIndicators(style) => {
@@ -427,10 +434,22 @@ impl App {
                     MouseAction::FocusToastTarget => self.focus_toast_target_via_api(),
                     MouseAction::MoveWorkspace {
                         source_ws_idx,
-                        insert_idx,
-                    } => self.move_workspace_via_api(source_ws_idx, insert_idx),
-                    MouseAction::MoveWorkspaceBlock { params } => {
-                        self.move_workspace_block_via_api(params)
+                        folder_id,
+                        insert_index,
+                    } => self.move_workspace_to_via_api(source_ws_idx, folder_id, insert_index),
+                    MouseAction::MoveWorkspaceFolder {
+                        folder_id,
+                        insert_index,
+                    } => {
+                        self.dispatch_runtime_mutation(
+                            "tui.workspace.folder.move",
+                            crate::api::schema::Method::WorkspaceFolderMove(
+                                crate::api::schema::WorkspaceFolderMoveParams {
+                                    folder_id,
+                                    insert_index,
+                                },
+                            ),
+                        );
                     }
                     MouseAction::MoveTab {
                         ws_idx,
@@ -730,9 +749,11 @@ pub(crate) fn is_modal_paste_shortcut(key: &KeyEvent) -> bool {
 
 pub(crate) fn modal_paste_target_active(state: &AppState) -> bool {
     match state.mode {
-        Mode::RenameWorkspace | Mode::RenameTab | Mode::RenamePane | Mode::NewLinkedWorktree => {
-            true
-        }
+        Mode::RenameWorkspace
+        | Mode::RenameWorkspaceFolder
+        | Mode::RenameTab
+        | Mode::RenamePane
+        | Mode::NewLinkedWorktree => true,
         Mode::OpenExistingWorktree => state
             .worktree_open
             .as_ref()
@@ -872,6 +893,7 @@ fn capture_snapshot(state: &AppState) -> crate::persist::SessionSnapshot {
     let terminal_runtimes = crate::terminal::TerminalRuntimeRegistry::new();
     crate::persist::capture(
         &state.workspaces,
+        &state.workspace_layout,
         &state.terminals,
         &terminal_runtimes,
         state.active,

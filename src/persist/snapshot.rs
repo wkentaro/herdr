@@ -18,6 +18,8 @@ pub struct SessionSnapshot {
     #[serde(default)]
     pub version: u32,
     pub workspaces: Vec<WorkspaceSnapshot>,
+    #[serde(default)]
+    pub workspace_layout: crate::workspace_layout::WorkspaceLayout,
     pub active: Option<usize>,
     pub selected: usize,
     #[serde(default)]
@@ -175,6 +177,8 @@ struct RawSessionSnapshot {
     #[serde(default)]
     workspaces: Vec<serde_json::Value>,
     #[serde(default)]
+    workspace_layout: crate::workspace_layout::WorkspaceLayout,
+    #[serde(default)]
     active: Option<usize>,
     #[serde(default)]
     selected: usize,
@@ -194,6 +198,7 @@ fn migrate_snapshot(raw: RawSessionSnapshot) -> Result<SessionSnapshot, String> 
             .into_iter()
             .map(migrate_workspace)
             .collect::<Result<Vec<_>, _>>()?,
+        workspace_layout: raw.workspace_layout,
         active: raw.active,
         selected: raw.selected,
         sidebar_width: raw.sidebar_width,
@@ -251,6 +256,7 @@ fn first_pane_id_in_layout(layout: &LayoutSnapshot) -> Option<u32> {
 /// Capture the current app state into a serializable snapshot.
 pub fn capture(
     workspaces: &[Workspace],
+    workspace_layout: &crate::workspace_layout::WorkspaceLayout,
     terminals: &std::collections::HashMap<
         crate::terminal::TerminalId,
         crate::terminal::TerminalState,
@@ -268,6 +274,7 @@ pub fn capture(
             .iter()
             .map(|workspace| capture_workspace(workspace, terminals, terminal_runtimes))
             .collect(),
+        workspace_layout: workspace_layout.clone(),
         active,
         selected,
         sidebar_width: Some(sidebar_width),
@@ -534,6 +541,7 @@ mod tests {
     ) -> SessionSnapshot {
         capture(
             &state.workspaces,
+            &state.workspace_layout,
             &state.terminals,
             terminal_runtimes,
             state.active,
@@ -599,6 +607,7 @@ mod tests {
     fn round_trip_empty_session() {
         let snap = SessionSnapshot {
             version: SNAPSHOT_VERSION,
+            workspace_layout: Default::default(),
             workspaces: vec![],
             active: None,
             selected: 0,
@@ -663,6 +672,7 @@ mod tests {
         );
 
         let snap = SessionSnapshot {
+            workspace_layout: Default::default(),
             workspaces: vec![WorkspaceSnapshot {
                 id: Some("wproj".to_string()),
                 custom_name: Some("pi-mono".to_string()),
@@ -864,6 +874,25 @@ mod tests {
         assert_eq!(snapshot.workspaces[0].custom_name.as_deref(), Some("one"));
         assert_eq!(snapshot.active, Some(0));
         assert_eq!(snapshot.selected, 0);
+    }
+
+    #[test]
+    fn workspace_layout_round_trip_keeps_empty_folders() {
+        let mut state = state_with_workspaces(&["one"]);
+        state.normalize_workspace_layout();
+        let folder_id = state.create_workspace_folder("project".into()).unwrap();
+        state.collapsed_folder_ids.insert(folder_id.clone());
+
+        let encoded = serde_json::to_string(&capture_from_state(&state)).unwrap();
+        assert!(!encoded.contains("collapsed_folder_ids"));
+        let restored = parse_snapshot(&encoded).unwrap();
+        let folder = restored
+            .workspace_layout
+            .find_folder(&folder_id)
+            .expect("empty folder should persist");
+
+        assert_eq!(folder.name, "project");
+        assert!(folder.workspace_ids.is_empty());
     }
 
     #[test]
@@ -1225,6 +1254,7 @@ mod tests {
 
         let snap = SessionSnapshot {
             version: SNAPSHOT_VERSION,
+            workspace_layout: Default::default(),
             workspaces: vec![WorkspaceSnapshot {
                 id: Some("test-ws".to_string()),
                 custom_name: Some("fallback test".to_string()),

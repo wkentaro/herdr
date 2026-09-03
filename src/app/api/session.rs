@@ -50,6 +50,7 @@ impl App {
             focused_tab_id,
             focused_pane_id,
             workspaces,
+            workspace_layout: self.workspace_layout_info(),
             tabs,
             panes: self.collect_panes_for_workspace(None).unwrap_or_default(),
             layouts,

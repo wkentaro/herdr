@@ -53,6 +53,7 @@ fn request_uses_dot_method_names() {
             cwd: Some("/tmp".into()),
             focus: true,
             label: Some("api".into()),
+            folder_id: None,
             env: Default::default(),
         }),
     };
@@ -684,6 +685,7 @@ fn session_snapshot_request_and_response_round_trip() {
                 focused_tab_id: None,
                 focused_pane_id: None,
                 workspaces: Vec::new(),
+                workspace_layout: WorkspaceLayoutInfo { items: Vec::new() },
                 tabs: Vec::new(),
                 panes: Vec::new(),
                 layouts: Vec::new(),
@@ -696,6 +698,21 @@ fn session_snapshot_request_and_response_round_trip() {
     assert!(json.contains("\"name\":\"review\""));
     let restored: SuccessResponse = serde_json::from_str(&json).unwrap();
     assert_eq!(restored, response);
+}
+
+#[test]
+fn workspace_layout_defaults_for_older_responses() {
+    let response: SuccessResponse =
+        serde_json::from_str(r#"{"id":"list","result":{"type":"workspace_list","workspaces":[]}}"#)
+            .unwrap();
+    let ResponseResult::WorkspaceList {
+        workspace_layout, ..
+    } = response.result
+    else {
+        panic!("expected workspace list");
+    };
+
+    assert!(workspace_layout.items.is_empty());
 }
 
 #[test]
@@ -1081,6 +1098,7 @@ fn authority_mutation_requests_round_trip() {
         id: "move_ws".into(),
         method: Method::WorkspaceMove(WorkspaceMoveParams {
             workspace_id: "w1".into(),
+            folder_id: None,
             insert_index: 2,
         }),
     };
@@ -1144,6 +1162,7 @@ fn authority_mutation_requests_round_trip() {
             subscriptions: vec![
                 Subscription::WorkspaceMoved {},
                 Subscription::WorkspaceReordered {},
+                Subscription::WorkspaceLayoutUpdated {},
                 Subscription::TabMoved {},
                 Subscription::LayoutUpdated {},
             ],
@@ -1152,6 +1171,7 @@ fn authority_mutation_requests_round_trip() {
     let json = serde_json::to_string(&subscription).unwrap();
     assert!(json.contains("\"type\":\"workspace.moved\""));
     assert!(json.contains("\"type\":\"workspace.reordered\""));
+    assert!(json.contains("\"type\":\"workspace.layout_updated\""));
     assert!(json.contains("\"type\":\"tab.moved\""));
     assert!(json.contains("\"type\":\"layout.updated\""));
     let restored: Request = serde_json::from_str(&json).unwrap();

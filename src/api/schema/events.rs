@@ -28,6 +28,8 @@ pub enum Subscription {
     WorkspaceMoved {},
     #[serde(rename = "workspace.reordered")]
     WorkspaceReordered {},
+    #[serde(rename = "workspace.layout_updated")]
+    WorkspaceLayoutUpdated {},
     #[serde(rename = "workspace.closed")]
     WorkspaceClosed {},
     #[serde(rename = "workspace.focused")]
@@ -199,6 +201,7 @@ pub enum EventKind {
     WorkspaceRenamed,
     WorkspaceMoved,
     WorkspaceReordered,
+    WorkspaceLayoutUpdated,
     WorkspaceFocused,
     WorktreeCreated,
     WorktreeOpened,
@@ -230,6 +233,7 @@ impl EventKind {
             EventKind::WorkspaceRenamed => "workspace.renamed",
             EventKind::WorkspaceMoved => "workspace.moved",
             EventKind::WorkspaceReordered => "workspace.reordered",
+            EventKind::WorkspaceLayoutUpdated => "workspace.layout_updated",
             EventKind::WorkspaceFocused => "workspace.focused",
             EventKind::WorktreeCreated => "worktree.created",
             EventKind::WorktreeOpened => "worktree.opened",
@@ -262,6 +266,7 @@ pub const KNOWN_EVENT_KINDS: &[EventKind] = &[
     EventKind::WorkspaceRenamed,
     EventKind::WorkspaceMoved,
     EventKind::WorkspaceReordered,
+    EventKind::WorkspaceLayoutUpdated,
     EventKind::WorkspaceFocused,
     EventKind::WorktreeCreated,
     EventKind::WorktreeOpened,
@@ -290,6 +295,7 @@ pub const PLUGIN_HOOK_EVENT_KINDS: &[EventKind] = &[
     EventKind::WorkspaceRenamed,
     EventKind::WorkspaceMoved,
     EventKind::WorkspaceReordered,
+    EventKind::WorkspaceLayoutUpdated,
     EventKind::WorkspaceFocused,
     EventKind::WorktreeCreated,
     EventKind::WorktreeOpened,
@@ -447,6 +453,10 @@ pub enum EventData {
         workspace_ids: Vec<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         before_workspace_id: Option<String>,
+        workspaces: Vec<WorkspaceInfo>,
+    },
+    WorkspaceLayoutUpdated {
+        workspace_layout: super::workspaces::WorkspaceLayoutInfo,
         workspaces: Vec<WorkspaceInfo>,
     },
     WorkspaceFocused {

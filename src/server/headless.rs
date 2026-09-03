@@ -1057,6 +1057,7 @@ impl HeadlessServer {
                 cwd,
                 focus: true,
                 label,
+                folder_id: None,
                 env: Default::default(),
             }),
         )
@@ -1307,6 +1308,7 @@ impl HeadlessServer {
 
         let snapshot = crate::persist::capture(
             &self.app.state.workspaces,
+            &self.app.state.workspace_layout,
             &self.app.state.terminals,
             &self.app.terminal_runtimes,
             self.app.state.active,
@@ -2980,7 +2982,24 @@ impl HeadlessServer {
         let theme_changed = self.update_client_host_theme_from_events(client_id, &events);
         // Client-local theme reports were applied above; routing them again would update every
         // pane once per palette entry instead of once per captured batch.
+        let client_collapsed_folder_ids = self
+            .clients
+            .get_mut(&client_id)
+            .map(|client| std::mem::take(&mut client.collapsed_workspace_folder_ids))
+            .unwrap_or_default();
+        let shared_collapsed_folder_ids = std::mem::replace(
+            &mut self.app.state.collapsed_folder_ids,
+            client_collapsed_folder_ids,
+        );
         self.app.route_client_events_from(client_id, events, false);
+        if let Some(client) = self.clients.get_mut(&client_id) {
+            client.collapsed_workspace_folder_ids = std::mem::replace(
+                &mut self.app.state.collapsed_folder_ids,
+                shared_collapsed_folder_ids,
+            );
+        } else {
+            self.app.state.collapsed_folder_ids = shared_collapsed_folder_ids;
+        }
         if self.app.take_config_reloaded_from_disk() {
             self.reload_server_config(false);
         } else {
@@ -4506,6 +4525,15 @@ impl HeadlessServer {
                         self.app.state.tab_scroll,
                         self.app.state.mobile_switcher_scroll,
                     ));
+                    let client_collapsed_folder_ids = self
+                        .clients
+                        .get(&client_id)
+                        .map(|client| client.collapsed_workspace_folder_ids.clone())
+                        .unwrap_or_default();
+                    let shared_collapsed_folder_ids = std::mem::replace(
+                        &mut self.app.state.collapsed_folder_ids,
+                        client_collapsed_folder_ids,
+                    );
                     let (buffer, cursor) =
                         crate::server::render_stream::render_virtual_with_runtime_registry(
                             &mut self.app.state,
@@ -4514,6 +4542,7 @@ impl HeadlessServer {
                             is_foreground,
                             render_cell_size,
                         );
+                    self.app.state.collapsed_folder_ids = shared_collapsed_folder_ids;
                     if let Some((workspace, agent_panel, tab, mobile_switcher)) = preserved_scroll {
                         self.app.state.workspace_scroll = workspace;
                         self.app.state.agent_panel_scroll = agent_panel;

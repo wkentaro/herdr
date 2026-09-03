@@ -654,6 +654,12 @@ pub struct WorkspaceCardArea {
     pub indented: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WorkspaceFolderArea {
+    pub layout_index: usize,
+    pub rect: Rect,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorktreeCreateState {
     pub source_workspace_id: String,
@@ -809,6 +815,7 @@ pub struct ViewState {
     pub layout: ViewLayout,
     pub sidebar_rect: Rect,
     pub workspace_card_areas: Vec<WorkspaceCardArea>,
+    pub workspace_folder_areas: Vec<WorkspaceFolderArea>,
     pub tab_bar_rect: Rect,
     pub tab_hit_areas: Vec<Rect>,
     pub tab_scroll_left_hit_area: Rect,
@@ -832,6 +839,7 @@ pub enum Mode {
     Copy,
     Terminal,
     RenameWorkspace,
+    RenameWorkspaceFolder,
     RenameTab,
     RenamePane,
     NewLinkedWorktree,
@@ -1131,14 +1139,27 @@ pub struct SettingsState {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WorkspaceDropTarget {
-    Before(usize),
-    End,
+    Root {
+        insert_index: usize,
+    },
+    Folder {
+        layout_index: usize,
+        insert_index: usize,
+    },
+    AppendToFolder {
+        layout_index: usize,
+    },
 }
 
 pub(crate) enum DragTarget {
     WorkspaceReorder {
         source_id: crate::app::InputSourceId,
         source_ws_idx: usize,
+        drop_target: Option<WorkspaceDropTarget>,
+    },
+    WorkspaceFolderReorder {
+        source_id: crate::app::InputSourceId,
+        source_layout_index: usize,
         drop_target: Option<WorkspaceDropTarget>,
     },
     TabReorder {
@@ -1187,6 +1208,12 @@ pub(crate) struct WorkspacePressState {
     pub start_row: u16,
 }
 
+pub(crate) struct WorkspaceFolderPressState {
+    pub layout_index: usize,
+    pub start_col: u16,
+    pub start_row: u16,
+}
+
 pub(crate) struct TabPressState {
     pub ws_idx: usize,
     pub tab_idx: usize,
@@ -1196,14 +1223,19 @@ pub(crate) struct TabPressState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContextMenuKind {
+    WorkspaceFolder {
+        folder_id: String,
+    },
     Workspace {
         ws_idx: usize,
     },
     GitWorkspace {
         ws_idx: usize,
         is_linked_worktree: bool,
-        has_worktree_children: bool,
-        collapsed: bool,
+    },
+    MoveWorkspace {
+        ws_idx: usize,
+        destinations: Vec<WorkspaceMoveDestination>,
     },
     Tab {
         ws_idx: usize,
@@ -1219,6 +1251,13 @@ pub enum ContextMenuKind {
     },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceMoveDestination {
+    pub label: String,
+    pub folder_id: Option<String>,
+    pub insert_index: usize,
+}
+
 /// Right-click context menu state.
 pub struct ContextMenuState {
     pub kind: ContextMenuKind,
@@ -1228,51 +1267,66 @@ pub struct ContextMenuState {
 }
 
 impl ContextMenuState {
-    pub fn items(&self) -> Vec<&'static str> {
+    pub fn items(&self) -> Vec<String> {
         match self.kind {
-            ContextMenuKind::Workspace { .. } => vec!["Rename", "Close"],
+            ContextMenuKind::WorkspaceFolder { .. } => {
+                ["New workspace here", "Rename", "Delete folder"]
+                    .map(str::to_string)
+                    .to_vec()
+            }
+            ContextMenuKind::Workspace { .. } => {
+                ["Rename", "Move…", "Close"].map(str::to_string).to_vec()
+            }
             ContextMenuKind::GitWorkspace {
                 is_linked_worktree: false,
-                has_worktree_children: false,
                 ..
-            } => vec!["Rename", "Close", "New worktree", "Open worktree..."],
+            } => [
+                "Rename",
+                "Move…",
+                "Close",
+                "New worktree",
+                "Open worktree...",
+            ]
+            .map(str::to_string)
+            .to_vec(),
             ContextMenuKind::GitWorkspace {
                 is_linked_worktree: true,
                 ..
-            } => vec!["Rename", "Close", "Delete worktree checkout..."],
-            ContextMenuKind::GitWorkspace {
-                is_linked_worktree: false,
-                has_worktree_children: true,
-                collapsed,
-                ..
-            } => vec![
-                "Rename",
-                "Close group",
-                "New worktree",
-                "Open worktree...",
-                if collapsed { "Expand" } else { "Collapse" },
-            ],
-            ContextMenuKind::Tab { .. } => vec!["New tab", "Rename", "Close"],
+            } => ["Rename", "Move…", "Close", "Delete worktree checkout..."]
+                .map(str::to_string)
+                .to_vec(),
+            ContextMenuKind::MoveWorkspace {
+                ref destinations, ..
+            } => destinations
+                .iter()
+                .map(|destination| destination.label.clone())
+                .collect(),
+            ContextMenuKind::Tab { .. } => {
+                ["New tab", "Rename", "Close"].map(str::to_string).to_vec()
+            }
             ContextMenuKind::Pane {
                 source_pane_id,
                 has_manual_label,
                 right_click_passthrough,
                 ..
             } => {
-                let mut items = vec!["Rename pane"];
+                let mut items = vec!["Rename pane".to_string()];
                 if has_manual_label {
-                    items.push("Clear pane name");
+                    items.push("Clear pane name".into());
                 }
                 if source_pane_id.is_some() {
-                    items.push("Swap with focused pane");
+                    items.push("Swap with focused pane".into());
                 }
-                items.extend(["Split right", "Split down", "Zoom"]);
-                items.push(if right_click_passthrough {
-                    "Use Herdr right-click menu"
-                } else {
-                    "Send right-clicks to pane"
-                });
-                items.push("Close pane");
+                items.extend(["Split right", "Split down", "Zoom"].map(str::to_string));
+                items.push(
+                    if right_click_passthrough {
+                        "Use Herdr right-click menu"
+                    } else {
+                        "Send right-clicks to pane"
+                    }
+                    .into(),
+                );
+                items.push("Close pane".into());
                 items
             }
         }
@@ -1382,6 +1436,7 @@ pub struct AppState {
     pub(crate) public_pane_id_aliases: std::collections::HashMap<String, PaneId>,
     pub(crate) session_name: Option<String>,
     pub workspaces: Vec<Workspace>,
+    pub(crate) workspace_layout: crate::workspace_layout::WorkspaceLayout,
     pub active: Option<usize>,
     pub(crate) previous_pane_focus: Option<PaneFocusTarget>,
     pub selected: usize,
@@ -1412,12 +1467,16 @@ pub struct AppState {
     pub creating_new_tab: bool,
     pub requested_new_tab_name: Option<String>,
     pub pending_workspace_create_cwd: Option<std::path::PathBuf>,
+    pub(crate) pending_workspace_folder_id: Option<String>,
     pub rename_pane_target: Option<PaneId>,
     pub worktree_create: Option<WorktreeCreateState>,
     pub worktree_open: Option<WorktreeOpenState>,
     pub worktree_remove: Option<WorktreeRemoveState>,
     pub worktree_directory: std::path::PathBuf,
     pub collapsed_space_keys: std::collections::HashSet<String>,
+    pub(crate) collapsed_folder_ids: std::collections::HashSet<String>,
+    pub(crate) selected_folder_id: Option<String>,
+    pub(crate) editing_folder_id: Option<String>,
     pub request_complete_onboarding: bool,
     pub name_input: String,
     pub name_input_replace_on_type: bool,
@@ -1436,6 +1495,8 @@ pub struct AppState {
     pub(crate) drag: Option<DragState>,
     pub(crate) workspace_presses:
         std::collections::HashMap<crate::app::InputSourceId, WorkspacePressState>,
+    pub(crate) workspace_folder_presses:
+        std::collections::HashMap<crate::app::InputSourceId, WorkspaceFolderPressState>,
     pub(crate) tab_presses: std::collections::HashMap<crate::app::InputSourceId, TabPressState>,
     pub selection: Option<Selection>,
     pub selection_autoscroll: Option<SelectionAutoscroll>,
@@ -1775,6 +1836,7 @@ impl AppState {
             public_pane_id_aliases: std::collections::HashMap::new(),
             session_name: Some(crate::session::DEFAULT_SESSION_NAME.to_string()),
             workspaces: Vec::new(),
+            workspace_layout: crate::workspace_layout::WorkspaceLayout::default(),
             active: None,
             previous_pane_focus: None,
             selected: 0,
@@ -1798,12 +1860,16 @@ impl AppState {
             creating_new_tab: false,
             requested_new_tab_name: None,
             pending_workspace_create_cwd: None,
+            pending_workspace_folder_id: None,
             rename_pane_target: None,
             worktree_create: None,
             worktree_open: None,
             worktree_remove: None,
             worktree_directory: std::path::PathBuf::from("/tmp/herdr-worktrees"),
             collapsed_space_keys: std::collections::HashSet::new(),
+            collapsed_folder_ids: std::collections::HashSet::new(),
+            selected_folder_id: None,
+            editing_folder_id: None,
             request_complete_onboarding: false,
             name_input: String::new(),
             name_input_replace_on_type: false,
@@ -1821,6 +1887,7 @@ impl AppState {
                 layout: ViewLayout::Desktop,
                 sidebar_rect: Rect::default(),
                 workspace_card_areas: Vec::new(),
+                workspace_folder_areas: Vec::new(),
                 tab_bar_rect: Rect::default(),
                 tab_hit_areas: Vec::new(),
                 tab_scroll_left_hit_area: Rect::default(),
@@ -1835,6 +1902,7 @@ impl AppState {
             },
             drag: None,
             workspace_presses: std::collections::HashMap::new(),
+            workspace_folder_presses: std::collections::HashMap::new(),
             tab_presses: std::collections::HashMap::new(),
             selection: None,
             selection_autoscroll: None,
@@ -1974,6 +2042,31 @@ impl AppState {
     }
 
     pub fn assert_invariants_for_test(&self) {
+        if !self.workspace_layout.items.is_empty() {
+            let mut folder_ids = std::collections::HashSet::new();
+            for item in &self.workspace_layout.items {
+                if let crate::workspace_layout::WorkspaceLayoutItem::Folder(folder) = item {
+                    assert!(
+                        folder_ids.insert(&folder.id),
+                        "duplicate workspace folder id"
+                    );
+                    assert_eq!(
+                        folder.name,
+                        folder.name.trim(),
+                        "folder name must be trimmed"
+                    );
+                    assert!(!folder.name.is_empty(), "folder name must not be blank");
+                }
+            }
+            assert_eq!(
+                self.workspace_layout.collect_ordered_workspace_ids(),
+                self.workspaces
+                    .iter()
+                    .map(|workspace| workspace.id.as_str())
+                    .collect::<Vec<_>>(),
+                "workspace layout must match canonical workspace order"
+            );
+        }
         if self.workspaces.is_empty() {
             assert!(
                 self.active.is_none(),
@@ -2037,6 +2130,10 @@ impl AppState {
             assert!(
                 self.workspace_presses.is_empty(),
                 "empty app state must not keep workspace press state"
+            );
+            assert!(
+                self.workspace_folder_presses.is_empty(),
+                "empty app state must not keep workspace folder press state"
             );
             assert!(
                 self.tab_presses.is_empty(),
@@ -2209,10 +2306,9 @@ impl AppState {
                     ..
                 } => {
                     assert_workspace_index(*source_ws_idx, "workspace drag source");
-                    if let Some(WorkspaceDropTarget::Before(ws_idx)) = drop_target {
-                        assert_workspace_index(*ws_idx, "workspace drag target");
-                    }
+                    let _ = drop_target;
                 }
+                DragTarget::WorkspaceFolderReorder { .. } => {}
                 DragTarget::TabReorder {
                     ws_idx,
                     source_tab_idx,
@@ -2244,9 +2340,18 @@ impl AppState {
         }
         if let Some(menu) = &self.context_menu {
             match menu.kind {
+                ContextMenuKind::WorkspaceFolder { ref folder_id } => {
+                    assert!(
+                        self.workspace_layout.find_folder(folder_id).is_some(),
+                        "context menu references missing workspace folder"
+                    );
+                }
                 ContextMenuKind::Workspace { ws_idx }
                 | ContextMenuKind::GitWorkspace { ws_idx, .. } => {
                     assert_workspace_index(ws_idx, "context menu workspace")
+                }
+                ContextMenuKind::MoveWorkspace { ws_idx, .. } => {
+                    assert_workspace_index(ws_idx, "move workspace menu")
                 }
                 ContextMenuKind::Tab { ws_idx, tab_idx } => {
                     assert_tab_index(ws_idx, tab_idx, "context menu tab")
@@ -2568,8 +2673,6 @@ mod tests {
             kind: ContextMenuKind::GitWorkspace {
                 ws_idx: 0,
                 is_linked_worktree: true,
-                has_worktree_children: false,
-                collapsed: false,
             },
             x: 0,
             y: 0,
@@ -2578,7 +2681,7 @@ mod tests {
 
         assert_eq!(
             menu.items(),
-            &["Rename", "Close", "Delete worktree checkout..."]
+            &["Rename", "Move…", "Close", "Delete worktree checkout..."]
         );
     }
 
@@ -2588,28 +2691,6 @@ mod tests {
             kind: ContextMenuKind::GitWorkspace {
                 ws_idx: 0,
                 is_linked_worktree: false,
-                has_worktree_children: false,
-                collapsed: false,
-            },
-            x: 0,
-            y: 0,
-            list: MenuListState::new(0),
-        };
-
-        assert_eq!(
-            menu.items(),
-            &["Rename", "Close", "New worktree", "Open worktree..."]
-        );
-    }
-
-    #[test]
-    fn parent_worktree_context_menu_uses_repo_actions() {
-        let menu = ContextMenuState {
-            kind: ContextMenuKind::GitWorkspace {
-                ws_idx: 0,
-                is_linked_worktree: false,
-                has_worktree_children: true,
-                collapsed: false,
             },
             x: 0,
             y: 0,
@@ -2620,10 +2701,34 @@ mod tests {
             menu.items(),
             &[
                 "Rename",
-                "Close group",
+                "Move…",
+                "Close",
                 "New worktree",
-                "Open worktree...",
-                "Collapse"
+                "Open worktree..."
+            ]
+        );
+    }
+
+    #[test]
+    fn parent_worktree_context_menu_closes_only_one_workspace() {
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::GitWorkspace {
+                ws_idx: 0,
+                is_linked_worktree: false,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+
+        assert_eq!(
+            menu.items(),
+            &[
+                "Rename",
+                "Move…",
+                "Close",
+                "New worktree",
+                "Open worktree..."
             ]
         );
     }

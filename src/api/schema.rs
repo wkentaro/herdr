@@ -79,6 +79,14 @@ pub enum Method {
     WorkspaceMove(WorkspaceMoveParams),
     #[serde(rename = "workspace.move_block")]
     WorkspaceMoveBlock(WorkspaceMoveBlockParams),
+    #[serde(rename = "workspace.folder.create")]
+    WorkspaceFolderCreate(WorkspaceFolderCreateParams),
+    #[serde(rename = "workspace.folder.rename")]
+    WorkspaceFolderRename(WorkspaceFolderRenameParams),
+    #[serde(rename = "workspace.folder.delete")]
+    WorkspaceFolderDelete(WorkspaceFolderTarget),
+    #[serde(rename = "workspace.folder.move")]
+    WorkspaceFolderMove(WorkspaceFolderMoveParams),
     #[serde(rename = "workspace.report_metadata")]
     WorkspaceReportMetadata(WorkspaceReportMetadataParams),
     #[serde(rename = "workspace.close")]

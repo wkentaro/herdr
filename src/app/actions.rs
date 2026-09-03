@@ -1123,6 +1123,7 @@ impl AppState {
             let previous_focus = self.current_pane_focus_target();
             self.active = Some(idx);
             self.selected = idx;
+            self.selected_folder_id = None;
             let workspace_id = self.workspaces[idx].id.clone();
             crate::logging::workspace_focused(&workspace_id);
             self.mark_session_dirty();
@@ -1297,24 +1298,7 @@ impl AppState {
     }
 
     pub(crate) fn visible_workspace_order(&self) -> Vec<usize> {
-        // Mobile always shows the worktree tree expanded, so its visible order
-        // must ignore collapse state to match what the switcher renders.
-        let entries = if self.view.layout == ViewLayout::Mobile {
-            crate::ui::workspace_list_entries_expanded(self)
-        } else {
-            crate::ui::workspace_list_entries(self)
-        };
-        let order = entries
-            .into_iter()
-            .map(|entry| match entry {
-                crate::ui::WorkspaceListEntry::Workspace { ws_idx, .. } => ws_idx,
-            })
-            .collect::<Vec<_>>();
-        if order.is_empty() {
-            (0..self.workspaces.len()).collect()
-        } else {
-            order
-        }
+        (0..self.workspaces.len()).collect()
     }
 
     pub(crate) fn workspace_at_visible_position(&self, position: usize) -> Option<usize> {
@@ -1322,20 +1306,45 @@ impl AppState {
     }
 
     pub(crate) fn move_selected_workspace_by_visible_delta(&mut self, delta: isize) {
-        if self.workspaces.is_empty() {
+        let entries = crate::ui::workspace_list_entries(self);
+        if entries.is_empty() {
             return;
         }
-        let order = self.visible_workspace_order();
-        let current_pos = order
+        let current_pos = entries
             .iter()
-            .position(|idx| *idx == self.selected)
+            .position(|entry| match entry {
+                crate::ui::WorkspaceListEntry::Folder { layout_index } => self
+                    .workspace_layout
+                    .items
+                    .get(*layout_index)
+                    .is_some_and(|item| {
+                        matches!(item, crate::workspace_layout::WorkspaceLayoutItem::Folder(folder)
+                            if self.selected_folder_id.as_deref() == Some(&folder.id))
+                    }),
+                crate::ui::WorkspaceListEntry::Workspace { ws_idx, .. } => {
+                    self.selected_folder_id.is_none() && *ws_idx == self.selected
+                }
+            })
             .unwrap_or(0);
         let target_pos = current_pos
             .saturating_add_signed(delta)
-            .min(order.len().saturating_sub(1));
-        if let Some(ws_idx) = order.get(target_pos).copied() {
-            self.selected = ws_idx;
-            self.ensure_workspace_visible(ws_idx);
+            .min(entries.len().saturating_sub(1));
+        match entries.get(target_pos) {
+            Some(crate::ui::WorkspaceListEntry::Folder { layout_index }) => {
+                let Some(crate::workspace_layout::WorkspaceLayoutItem::Folder(folder)) =
+                    self.workspace_layout.items.get(*layout_index)
+                else {
+                    return;
+                };
+                self.selected_folder_id = Some(folder.id.clone());
+                self.workspace_scroll = self.workspace_scroll.min(target_pos);
+            }
+            Some(crate::ui::WorkspaceListEntry::Workspace { ws_idx, .. }) => {
+                self.selected_folder_id = None;
+                self.selected = *ws_idx;
+                self.ensure_workspace_visible(*ws_idx);
+            }
+            None => {}
         }
     }
 
@@ -1367,6 +1376,7 @@ impl AppState {
         self.switch_workspace(prev);
     }
 
+    #[cfg(test)]
     pub fn move_workspace(&mut self, source_idx: usize, insert_idx: usize) -> bool {
         if source_idx >= self.workspaces.len() || insert_idx > self.workspaces.len() {
             return false;
@@ -1400,6 +1410,7 @@ impl AppState {
         true
     }
 
+    #[cfg(test)]
     pub fn move_workspace_block(
         &mut self,
         workspace_ids: &[String],
@@ -1677,42 +1688,19 @@ impl AppState {
         self.selection = None;
         self.selection_autoscroll = None;
         self.mark_session_dirty();
-        let close_indices = self
-            .workspaces
-            .get(self.selected)
-            .and_then(|ws| ws.worktree_space())
-            .filter(|space| !space.is_linked_worktree)
-            .map(|space| {
-                self.workspaces
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(idx, ws)| {
-                        ws.worktree_space()
-                            .is_some_and(|member| member.key == space.key)
-                            .then_some(idx)
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .filter(|indices| indices.len() >= 2)
-            .unwrap_or_else(|| vec![self.selected]);
+        let close_index = self.selected;
 
-        let mut terminal_ids = Vec::new();
-        let mut pane_ids = Vec::new();
-        for idx in &close_indices {
-            terminal_ids.extend(self.terminal_ids_for_workspace(*idx));
-            pane_ids.extend(self.pane_ids_for_workspace(*idx));
-            if let Some(workspace_id) = self.workspaces.get(*idx).map(|ws| ws.id.clone()) {
-                crate::logging::workspace_closed(&workspace_id);
-            }
+        let terminal_ids = self.terminal_ids_for_workspace(close_index);
+        let pane_ids = self.pane_ids_for_workspace(close_index);
+        if let Some(workspace_id) = self.workspaces.get(close_index).map(|ws| ws.id.clone()) {
+            crate::logging::workspace_closed(&workspace_id);
         }
         let active_workspace_id = self
             .active
             .and_then(|idx| self.workspaces.get(idx))
             .map(|ws| ws.id.clone());
         self.remove_plugin_pane_records(pane_ids);
-        for idx in close_indices.iter().rev() {
-            self.workspaces.remove(*idx);
-        }
+        self.remove_workspace_at(close_index);
         self.remove_unattached_terminal_ids(terminal_ids);
         if self.workspaces.is_empty() {
             self.active = None;
@@ -1984,67 +1972,10 @@ impl AppState {
         self.apply_pane_zoom(ws_idx, pane_id, PaneZoomCommand::Toggle);
     }
 
-    pub(crate) fn workspace_close_would_close_worktree_group(&self, ws_idx: usize) -> bool {
-        self.workspaces
-            .get(ws_idx)
-            .and_then(|ws| ws.worktree_space())
-            .filter(|space| !space.is_linked_worktree)
-            .is_some_and(|space| {
-                self.workspaces
-                    .iter()
-                    .filter(|ws| {
-                        ws.worktree_space()
-                            .is_some_and(|member| member.key == space.key)
-                    })
-                    .count()
-                    >= 2
-            })
-    }
-
-    pub(crate) fn confirm_implicit_worktree_group_close(&mut self, ws_idx: usize) -> bool {
-        if self.confirm_close && self.workspace_close_would_close_worktree_group(ws_idx) {
-            self.selected = ws_idx;
-            self.mode = Mode::ConfirmClose;
-            true
-        } else {
-            false
-        }
-    }
-
-    #[cfg(test)]
-    fn close_focused_pane_would_close_workspace(&self, ws_idx: usize) -> bool {
-        self.workspaces.get(ws_idx).is_some_and(|ws| {
-            let pane_count = ws
-                .active_tab()
-                .map(|tab| tab.layout.pane_count())
-                .unwrap_or(0);
-            pane_count <= 1 && ws.tabs.len() <= 1
-        })
-    }
-
-    pub(crate) fn close_pane_would_close_workspace(&self, ws_idx: usize, pane_id: PaneId) -> bool {
-        self.workspaces.get(ws_idx).is_some_and(|ws| {
-            ws.find_tab_index_for_pane(pane_id).is_some_and(|tab_idx| {
-                ws.tabs[tab_idx].layout.pane_count() <= 1 && ws.tabs.len() <= 1
-            })
-        })
-    }
-
     #[cfg(test)]
     /// Close the focused pane. Returns true when the close was deferred to confirmation.
     pub fn close_pane(&mut self) -> bool {
         let active = self.active;
-        if active.is_some_and(|ws_idx| {
-            self.close_focused_pane_would_close_workspace(ws_idx)
-                && self.workspace_close_would_close_worktree_group(ws_idx)
-        }) {
-            if let Some(ws_idx) = active {
-                if self.confirm_implicit_worktree_group_close(ws_idx) {
-                    return true;
-                }
-            }
-        }
-
         self.selection = None;
         self.selection_autoscroll = None;
         self.mark_session_dirty();
@@ -2079,19 +2010,6 @@ impl AppState {
     #[cfg(test)]
     /// Close the active tab. Returns true when the close was deferred to confirmation.
     pub fn close_tab(&mut self) -> bool {
-        if self.active.is_some_and(|ws_idx| {
-            self.workspaces
-                .get(ws_idx)
-                .is_some_and(|ws| ws.tabs.len() <= 1)
-                && self.workspace_close_would_close_worktree_group(ws_idx)
-        }) {
-            if let Some(ws_idx) = self.active {
-                if self.confirm_implicit_worktree_group_close(ws_idx) {
-                    return true;
-                }
-            }
-        }
-
         self.selection = None;
         self.selection_autoscroll = None;
         self.mark_session_dirty();
@@ -3367,7 +3285,7 @@ impl AppState {
                 .and_then(|idx| self.workspaces.get(idx))
                 .map(|ws| ws.id.clone());
             let selected_workspace_id = self.workspaces.get(self.selected).map(|ws| ws.id.clone());
-            self.workspaces.remove(ws_idx);
+            self.remove_workspace_at(ws_idx);
             self.remove_unattached_terminal_ids(workspace_terminal_ids);
             if self.workspaces.is_empty() {
                 self.active = None;
@@ -3439,16 +3357,6 @@ mod tests {
             repo_root: "/repo/herdr".into(),
             checkout_path: format!("/repo/worktree-{ws_idx}").into(),
             is_linked_worktree: true,
-        });
-    }
-
-    fn mark_parent_worktree(state: &mut AppState, ws_idx: usize) {
-        state.workspaces[ws_idx].worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
-            key: "repo-key".into(),
-            label: "herdr".into(),
-            repo_root: "/repo/herdr".into(),
-            checkout_path: "/repo/herdr".into(),
-            is_linked_worktree: false,
         });
     }
 
@@ -4661,7 +4569,7 @@ mod tests {
     }
 
     #[test]
-    fn close_parent_worktree_workspace_closes_group() {
+    fn close_parent_worktree_workspace_closes_only_selected_workspace() {
         let mut state = app_with_workspaces(&["main", "issue", "notes"]);
         state.workspaces[0].worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
             key: "repo-key".into(),
@@ -4682,8 +4590,9 @@ mod tests {
 
         state.close_selected_workspace();
 
-        assert_eq!(state.workspaces.len(), 1);
-        assert_eq!(state.workspaces[0].display_name(), "notes");
+        assert_eq!(state.workspaces.len(), 2);
+        assert_eq!(state.workspaces[0].display_name(), "issue");
+        assert_eq!(state.workspaces[1].display_name(), "notes");
         assert_eq!(state.active, Some(0));
         assert_eq!(state.selected, 0);
     }
@@ -6068,22 +5977,6 @@ mod tests {
     }
 
     #[test]
-    fn close_pane_last_pane_in_parent_worktree_group_prompts() {
-        let mut state = app_with_workspaces(&["parent", "child"]);
-        mark_parent_worktree(&mut state, 0);
-        mark_linked_worktree(&mut state, 1);
-        state.active = Some(0);
-        state.selected = 1;
-
-        let deferred = state.close_pane();
-
-        assert!(deferred);
-        assert_eq!(state.mode, Mode::ConfirmClose);
-        assert_eq!(state.selected, 0);
-        assert_eq!(state.workspaces.len(), 2);
-    }
-
-    #[test]
     fn close_tab_in_linked_worktree_closes_workspace_only() {
         let mut state = app_with_workspaces(&["selected", "active"]);
         mark_linked_worktree(&mut state, 1);
@@ -6098,22 +5991,6 @@ mod tests {
     }
 
     #[test]
-    fn close_tab_last_tab_in_parent_worktree_group_prompts() {
-        let mut state = app_with_workspaces(&["parent", "child"]);
-        mark_parent_worktree(&mut state, 0);
-        mark_linked_worktree(&mut state, 1);
-        state.active = Some(0);
-        state.selected = 1;
-
-        let deferred = state.close_tab();
-
-        assert!(deferred);
-        assert_eq!(state.mode, Mode::ConfirmClose);
-        assert_eq!(state.selected, 0);
-        assert_eq!(state.workspaces.len(), 2);
-    }
-
-    #[test]
     fn close_pane_last_pane_in_linked_worktree_closes_workspace_only() {
         let mut state = app_with_workspaces(&["selected", "active"]);
         mark_linked_worktree(&mut state, 1);
@@ -6125,21 +6002,5 @@ mod tests {
         assert_eq!(state.request_remove_linked_worktree, None);
         assert_eq!(state.workspaces.len(), 1);
         assert_eq!(state.workspaces[0].display_name(), "selected");
-    }
-
-    #[test]
-    fn close_pane_last_pane_in_parent_worktree_group_closes_when_confirmation_disabled() {
-        let mut state = app_with_workspaces(&["parent", "child", "notes"]);
-        mark_parent_worktree(&mut state, 0);
-        mark_linked_worktree(&mut state, 1);
-        state.confirm_close = false;
-        state.active = Some(0);
-        state.selected = 0;
-
-        let deferred = state.close_pane();
-
-        assert!(!deferred);
-        assert_eq!(state.workspaces.len(), 1);
-        assert_eq!(state.workspaces[0].display_name(), "notes");
     }
 }

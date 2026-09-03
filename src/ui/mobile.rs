@@ -7,9 +7,8 @@ use ratatui::{
 };
 
 use super::sidebar::{
-    agent_panel_entries, agent_panel_entries_from, grouped_child_display_label,
-    next_entry_is_indented_workspace, workspace_list_entries_expanded, AgentPanelEntry,
-    WorkspaceListEntry,
+    agent_panel_entries, agent_panel_entries_from, folder_aggregate_state,
+    next_entry_is_indented_workspace, workspace_list_entries, AgentPanelEntry, WorkspaceListEntry,
 };
 use super::status::{state_icon, state_icon_symbol};
 use super::text::{display_width_u16, truncate_end};
@@ -33,9 +32,10 @@ pub(crate) struct MobileSwitcherAreas {
     pub viewport: Rect,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum MobileSwitcherTarget {
     NewWorkspace,
+    Folder(String),
     Workspace(usize),
     NewTab,
     Tab(usize),
@@ -110,11 +110,12 @@ pub(crate) fn mobile_switcher_workspace_doc_range(
     app: &AppState,
     idx: usize,
 ) -> std::ops::Range<usize> {
-    // Spaces render in grouped order, so a workspace's row position is its index
-    // in the entry list, not its raw array index.
-    let pos = workspace_list_entries_expanded(app)
+    // Folder headers participate in the rendered entry order.
+    let pos = workspace_list_entries(app)
         .iter()
-        .position(|WorkspaceListEntry::Workspace { ws_idx, .. }| *ws_idx == idx)
+        .position(
+            |entry| matches!(entry, WorkspaceListEntry::Workspace { ws_idx, .. } if *ws_idx == idx),
+        )
         .unwrap_or(idx);
     // spaces sit after the agents block, then a title + "new workspace" row.
     let start = mobile_agents_block_height(app) + 2 + pos * 2;
@@ -171,15 +172,26 @@ pub(crate) fn mobile_switcher_target_at(
         return Some(MobileSwitcherTarget::NewWorkspace);
     }
     cursor += 1;
-    // Spaces render in grouped (worktree-tree) order, which differs from raw
-    // array order, so map the clicked row to the entry's real workspace index.
-    let space_entries = workspace_list_entries_expanded(app);
+    // Map the clicked row through the folder-aware entry list.
+    let space_entries = workspace_list_entries(app);
     let spaces_end = cursor + space_entries.len() * 2;
     if doc_row >= cursor && doc_row < spaces_end {
         let entry_idx = (doc_row - cursor) / 2;
-        return space_entries.get(entry_idx).map(
-            |WorkspaceListEntry::Workspace { ws_idx, .. }| MobileSwitcherTarget::Workspace(*ws_idx),
-        );
+        return space_entries.get(entry_idx).and_then(|entry| match entry {
+            WorkspaceListEntry::Folder { layout_index } => app
+                .workspace_layout
+                .items
+                .get(*layout_index)
+                .and_then(|item| match item {
+                    crate::workspace_layout::WorkspaceLayoutItem::Folder(folder) => {
+                        Some(MobileSwitcherTarget::Folder(folder.id.clone()))
+                    }
+                    crate::workspace_layout::WorkspaceLayoutItem::Workspace(_) => None,
+                }),
+            WorkspaceListEntry::Workspace { ws_idx, .. } => {
+                Some(MobileSwitcherTarget::Workspace(*ws_idx))
+            }
+        });
     }
     cursor = spaces_end;
 
@@ -454,7 +466,7 @@ fn render_close_button(app: &AppState, frame: &mut Frame, area: Rect) {
 fn mobile_switcher_content_height(app: &AppState) -> usize {
     // Derive spaces height from the same entry list the render/hit-test use so
     // the three never disagree.
-    let spaces_h = 2 + workspace_list_entries_expanded(app).len() * 2;
+    let spaces_h = 2 + workspace_list_entries(app).len() * 2;
     let tabs_h = app
         .active
         .and_then(|idx| app.workspaces.get(idx))
@@ -586,10 +598,62 @@ fn render_mobile_switcher_content(
         p,
     );
     doc_y += 1;
-    let space_entries = workspace_list_entries_expanded(app);
-    for (entry_idx, WorkspaceListEntry::Workspace { ws_idx, indented }) in
-        space_entries.iter().enumerate()
-    {
+    let space_entries = workspace_list_entries(app);
+    for (entry_idx, entry) in space_entries.iter().enumerate() {
+        let WorkspaceListEntry::Workspace { ws_idx, indented } = entry else {
+            let WorkspaceListEntry::Folder { layout_index } = entry else {
+                continue;
+            };
+            let Some(crate::workspace_layout::WorkspaceLayoutItem::Folder(folder)) =
+                app.workspace_layout.items.get(*layout_index)
+            else {
+                continue;
+            };
+            let collapsed = app.collapsed_folder_ids.contains(&folder.id);
+            let chevron = if folder.workspace_ids.is_empty() {
+                " "
+            } else if collapsed {
+                "▸"
+            } else {
+                "▾"
+            };
+            let mut title = vec![Span::styled(
+                format!("  {chevron} ▰ "),
+                Style::default().fg(p.overlay0),
+            )];
+            if !folder.workspace_ids.is_empty() {
+                let (state, seen) = folder_aggregate_state(app, folder);
+                let (dot, style) = state_icon(state, seen, app.status_indicators, p);
+                title.push(Span::styled(dot, style));
+                title.push(Span::raw(" "));
+            }
+            title.push(Span::styled(
+                truncate_end(
+                    &folder.name,
+                    content
+                        .width
+                        .saturating_sub(if folder.workspace_ids.is_empty() {
+                            7
+                        } else {
+                            9
+                        }) as usize,
+                ),
+                Style::default().fg(p.text).add_modifier(Modifier::BOLD),
+            ));
+            render_two_line_item(
+                frame,
+                viewport,
+                content,
+                doc_y,
+                app.mobile_switcher_scroll,
+                p.panel_bg,
+                Line::from(title),
+                String::new(),
+                p.overlay0,
+            );
+            doc_y += 2;
+            continue;
+        };
         let Some(ws) = app.workspaces.get(*ws_idx) else {
             continue;
         };
@@ -600,9 +664,7 @@ fn render_mobile_switcher_content(
         let (dot, dot_style) = state_icon(state, seen, app.status_indicators, p);
 
         let mut title_spans = vec![Span::styled("  ", Style::default().bg(bg))];
-        // Worktrees of the same space render as branches off their parent, so a
-        // child gets an L/T connector on its name row and a matching vertical
-        // continuation on its detail row.
+        // Folder children keep the tree connector aligned across both lines.
         let detail_prefix = if *indented {
             let last_child = !next_entry_is_indented_workspace(&space_entries, entry_idx);
             title_spans.push(Span::styled(
@@ -620,16 +682,7 @@ fn render_mobile_switcher_content(
 
         title_spans.push(Span::styled(dot, dot_style.bg(bg)));
         title_spans.push(Span::styled(" ", Style::default().bg(bg)));
-        let raw_label = ws.display_name_from(&app.terminals, terminal_runtimes);
-        let name = if *indented {
-            grouped_child_display_label(
-                &raw_label,
-                ws.branch().as_deref(),
-                ws.custom_name.is_some(),
-            )
-        } else {
-            raw_label
-        };
+        let name = ws.display_name_from(&app.terminals, terminal_runtimes);
         let name_budget = content.width.saturating_sub(if *indented { 8 } else { 5 }) as usize;
         title_spans.push(Span::styled(
             truncate_end(&name, name_budget),
@@ -1424,52 +1477,56 @@ mod tests {
             agent_hit,
             Some(MobileSwitcherTarget::Agent { .. })
         ));
+        app.mobile_switcher_scroll = 0;
         let workspace_hit = mobile_switcher_target_at(&app, viewport.x + 2, viewport.y + 7);
         assert_eq!(workspace_hit, Some(MobileSwitcherTarget::Workspace(0)));
     }
 
-    fn worktree_workspace(name: &str, key: &str, linked: bool) -> crate::workspace::Workspace {
-        let mut ws = crate::workspace::Workspace::test_new(name);
-        ws.worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
-            key: key.into(),
-            label: "herdr".into(),
-            repo_root: std::path::PathBuf::from("/repo/herdr"),
-            checkout_path: std::path::PathBuf::from(format!("/repo/{name}")),
-            is_linked_worktree: linked,
-        });
-        ws
-    }
-
     #[test]
-    fn switcher_spaces_follow_grouped_worktree_order() {
+    fn switcher_renders_and_collapses_manual_folders() {
         let mut app = crate::app::state::AppState::test_new();
         app.workspaces = vec![
-            worktree_workspace("main", "repo-key", false),
+            crate::workspace::Workspace::test_new("main"),
             crate::workspace::Workspace::test_new("other"),
-            worktree_workspace("feature", "repo-key", true),
+            crate::workspace::Workspace::test_new("feature"),
         ];
+        let main_id = app.workspaces[0].id.clone();
+        let other_id = app.workspaces[1].id.clone();
+        let feature_id = app.workspaces[2].id.clone();
+        app.workspace_layout.items = vec![
+            crate::workspace_layout::WorkspaceLayoutItem::Folder(
+                crate::workspace_layout::WorkspaceFolder {
+                    id: "f1".into(),
+                    name: "project".into(),
+                    workspace_ids: vec![main_id, feature_id],
+                },
+            ),
+            crate::workspace_layout::WorkspaceLayoutItem::Workspace(other_id),
+        ];
+        app.normalize_workspace_layout();
         app.active = Some(0);
         app.selected = 0;
         app.view.mobile_header_rect = Rect::new(0, 0, 40, 2);
         app.view.terminal_area = Rect::new(0, 2, 40, 18);
 
-        // Grouped order pulls the worktree (idx 2) up under its parent (idx 0),
-        // ahead of the unrelated "other" workspace (idx 1): rows are main,
-        // feature, other.
-        assert_eq!(mobile_switcher_workspace_doc_range(&app, 2).start, 4);
         assert_eq!(mobile_switcher_workspace_doc_range(&app, 1).start, 6);
+        assert_eq!(mobile_switcher_workspace_doc_range(&app, 2).start, 8);
 
         let viewport = mobile_switcher_areas(&app).viewport;
-        // The second space row on screen is the worktree, not workspaces[1].
-        let hit = mobile_switcher_target_at(&app, viewport.x + 2, viewport.y + 4);
-        assert_eq!(hit, Some(MobileSwitcherTarget::Workspace(2)));
+        assert_eq!(
+            mobile_switcher_target_at(&app, viewport.x + 2, viewport.y + 2),
+            Some(MobileSwitcherTarget::Folder("f1".into()))
+        );
+        assert_eq!(
+            mobile_switcher_target_at(&app, viewport.x + 2, viewport.y + 6),
+            Some(MobileSwitcherTarget::Workspace(1))
+        );
 
-        // Mobile ignores collapse: even with the space folded on desktop, the
-        // worktree child still renders in the same position.
-        app.collapsed_space_keys.insert("repo-key".to_string());
-        assert_eq!(mobile_switcher_workspace_doc_range(&app, 2).start, 4);
-        let hit = mobile_switcher_target_at(&app, viewport.x + 2, viewport.y + 4);
-        assert_eq!(hit, Some(MobileSwitcherTarget::Workspace(2)));
+        app.collapsed_folder_ids.insert("f1".into());
+        assert_eq!(
+            mobile_switcher_target_at(&app, viewport.x + 2, viewport.y + 4),
+            Some(MobileSwitcherTarget::Workspace(2))
+        );
     }
 
     #[test]

@@ -7,7 +7,7 @@ use crate::{
     app::state::{
         AgentPanelSort, AppState, ContextMenuKind, ContextMenuState, DragState, DragTarget,
         MenuListState, Mode, RightClickPassthroughGesture, TabPressState, ViewLayout,
-        WorkspacePressState,
+        WorkspaceFolderPressState, WorkspacePressState,
     },
     layout::{PaneInfo, SplitBorder},
     selection::Selection,
@@ -28,6 +28,9 @@ use super::{
 
 pub(super) enum MouseAction {
     NewWorkspace,
+    ToggleWorkspaceFolder {
+        folder_id: String,
+    },
     Settings(SettingsAction),
     FocusWorkspace {
         ws_idx: usize,
@@ -42,10 +45,12 @@ pub(super) enum MouseAction {
     FocusToastTarget,
     MoveWorkspace {
         source_ws_idx: usize,
-        insert_idx: usize,
+        folder_id: Option<String>,
+        insert_index: usize,
     },
-    MoveWorkspaceBlock {
-        params: crate::api::schema::WorkspaceMoveBlockParams,
+    MoveWorkspaceFolder {
+        folder_id: String,
+        insert_index: usize,
     },
     MoveTab {
         ws_idx: usize,
@@ -596,29 +601,26 @@ impl AppState {
                         return None;
                     }
 
-                    let cards = if self.view.workspace_card_areas.is_empty() {
-                        crate::ui::compute_workspace_card_areas(self, self.view.sidebar_rect)
-                    } else {
-                        self.view.workspace_card_areas.clone()
-                    };
-                    if let Some(card) = cards.iter().find(|card| {
-                        let chevron = crate::ui::workspace_group_chevron_rect(card);
-                        mouse.row == chevron.y && mouse.column == chevron.x && chevron.width > 0
-                    }) {
-                        if let Some((key, collapsed)) =
-                            crate::ui::workspace_parent_group_state(self, card.ws_idx)
-                        {
-                            if collapsed {
-                                self.collapsed_space_keys.remove(&key);
-                            } else {
-                                self.collapsed_space_keys.insert(key);
-                            }
-                            self.mark_session_dirty();
-                            return None;
-                        }
+                    if let Some(area) = self
+                        .view
+                        .workspace_folder_areas
+                        .iter()
+                        .find(|area| mouse.row >= area.rect.y && mouse.row < area.rect.bottom())
+                        .copied()
+                    {
+                        self.workspace_folder_presses.insert(
+                            source_id,
+                            WorkspaceFolderPressState {
+                                layout_index: area.layout_index,
+                                start_col: mouse.column,
+                                start_row: mouse.row,
+                            },
+                        );
+                        return None;
                     }
 
                     if let Some(idx) = self.workspace_at_row(mouse.row) {
+                        self.selected_folder_id = None;
                         self.workspace_presses.insert(
                             source_id,
                             WorkspacePressState {
@@ -717,17 +719,14 @@ impl AppState {
                 }
 
                 let workspace_drop_target = self.workspace_drop_target_at_row(mouse.row);
+                let workspace_folder_drop_target =
+                    self.workspace_folder_drop_target_at_row(mouse.row);
                 let tab_drop_index = self.tab_drop_index_at(mouse.column, mouse.row);
                 if self.drag.is_none() {
                     if let Some(press) = self.workspace_presses.get(&source_id) {
                         let delta_col = mouse.column.abs_diff(press.start_col);
                         let delta_row = mouse.row.abs_diff(press.start_row);
-                        let can_reorder = self.workspaces.get(press.ws_idx).is_some_and(|ws| {
-                            ws.worktree_space()
-                                .is_none_or(|space| !space.is_linked_worktree)
-                        });
                         if workspace_drop_target.is_some()
-                            && can_reorder
                             && delta_col.max(delta_row) >= WORKSPACE_DRAG_THRESHOLD
                         {
                             self.drag = Some(DragState {
@@ -735,6 +734,20 @@ impl AppState {
                                     source_id,
                                     source_ws_idx: press.ws_idx,
                                     drop_target: workspace_drop_target,
+                                },
+                            });
+                        }
+                    } else if let Some(press) = self.workspace_folder_presses.get(&source_id) {
+                        let delta_col = mouse.column.abs_diff(press.start_col);
+                        let delta_row = mouse.row.abs_diff(press.start_row);
+                        if workspace_folder_drop_target.is_some()
+                            && delta_col.max(delta_row) >= WORKSPACE_DRAG_THRESHOLD
+                        {
+                            self.drag = Some(DragState {
+                                target: DragTarget::WorkspaceFolderReorder {
+                                    source_id,
+                                    source_layout_index: press.layout_index,
+                                    drop_target: workspace_folder_drop_target,
                                 },
                             });
                         }
@@ -773,6 +786,18 @@ impl AppState {
                     }
                 } else if let Some(DragState {
                     target:
+                        DragTarget::WorkspaceFolderReorder {
+                            source_id: drag_source_id,
+                            drop_target,
+                            ..
+                        },
+                }) = &mut self.drag
+                {
+                    if *drag_source_id == source_id {
+                        *drop_target = workspace_folder_drop_target;
+                    }
+                } else if let Some(DragState {
+                    target:
                         DragTarget::TabReorder {
                             source_id: drag_source_id,
                             ws_idx,
@@ -786,7 +811,9 @@ impl AppState {
                     }
                 } else if let Some(drag) = &self.drag {
                     match &drag.target {
-                        DragTarget::WorkspaceReorder { .. } | DragTarget::TabReorder { .. } => {}
+                        DragTarget::WorkspaceReorder { .. }
+                        | DragTarget::WorkspaceFolderReorder { .. }
+                        | DragTarget::TabReorder { .. } => {}
                         DragTarget::WorkspaceListScrollbar { grab_row_offset } => {
                             if let Some(offset_from_bottom) =
                                 self.workspace_list_offset_for_drag_row(mouse.row, *grab_row_offset)
@@ -895,9 +922,10 @@ impl AppState {
                 }
 
                 let workspace_press = self.workspace_presses.remove(&source_id);
+                let folder_press = self.workspace_folder_presses.remove(&source_id);
                 let tab_press = self.tab_presses.remove(&source_id);
                 if foreign_chrome_drag {
-                    return self.chrome_press_action(workspace_press, tab_press);
+                    return self.chrome_press_action(workspace_press, folder_press, tab_press);
                 }
 
                 match self.drag.take() {
@@ -909,28 +937,31 @@ impl AppState {
                                 ..
                             },
                     }) => {
-                        if let Some(params) =
-                            self.workspace_move_block_params(source_ws_idx, drop_target)
+                        if let Some((folder_id, insert_index)) =
+                            self.resolve_workspace_drop_target(drop_target)
                         {
-                            if self
-                                .workspaces
-                                .get(source_ws_idx)
-                                .is_some_and(|workspace| workspace.worktree_space().is_some())
-                            {
-                                return Some(MouseAction::MoveWorkspaceBlock { params });
-                            }
-                            let insert_idx = params
-                                .before_workspace_id
-                                .as_ref()
-                                .and_then(|id| {
-                                    self.workspaces
-                                        .iter()
-                                        .position(|workspace| workspace.id == *id)
-                                })
-                                .unwrap_or(self.workspaces.len());
                             return Some(MouseAction::MoveWorkspace {
                                 source_ws_idx,
-                                insert_idx,
+                                folder_id,
+                                insert_index,
+                            });
+                        }
+                    }
+                    Some(DragState {
+                        target:
+                            DragTarget::WorkspaceFolderReorder {
+                                source_layout_index,
+                                drop_target:
+                                    Some(crate::app::state::WorkspaceDropTarget::Root { insert_index }),
+                                ..
+                            },
+                    }) => {
+                        if let Some(crate::workspace_layout::WorkspaceLayoutItem::Folder(folder)) =
+                            self.workspace_layout.items.get(source_layout_index)
+                        {
+                            return Some(MouseAction::MoveWorkspaceFolder {
+                                folder_id: folder.id.clone(),
+                                insert_index,
                             });
                         }
                     }
@@ -953,7 +984,9 @@ impl AppState {
                         }
                     }
                     Some(_) => {}
-                    None => return self.chrome_press_action(workspace_press, tab_press),
+                    None => {
+                        return self.chrome_press_action(workspace_press, folder_press, tab_press);
+                    }
                 }
             }
 
@@ -1073,13 +1106,22 @@ impl AppState {
                 {
                     return None;
                 }
-                if let Some(idx) = self.workspace_at_row(mouse.row) {
+                if let Some(folder_id) = self.workspace_folder_at_row(mouse.row) {
+                    self.selected_folder_id = Some(folder_id.clone());
+                    self.context_menu = Some(ContextMenuState {
+                        kind: ContextMenuKind::WorkspaceFolder { folder_id },
+                        x: mouse.column,
+                        y: mouse.row,
+                        list: MenuListState::new(0),
+                    });
+                    self.mode = Mode::ContextMenu;
+                } else if let Some(idx) = self.workspace_at_row(mouse.row) {
+                    self.selected_folder_id = None;
                     self.selected = idx;
                     let kind = self
                         .workspaces
                         .get(idx)
                         .and_then(|ws| {
-                            let group_state = crate::ui::workspace_parent_group_state(self, idx);
                             let git_space = ws.git_space().cloned().or_else(|| {
                                 ws.resolved_identity_cwd_from(&self.terminals, terminal_runtimes)
                                     .as_deref()
@@ -1100,10 +1142,6 @@ impl AppState {
                             show_git_menu.then_some(ContextMenuKind::GitWorkspace {
                                 ws_idx: idx,
                                 is_linked_worktree,
-                                has_worktree_children: group_state.is_some(),
-                                collapsed: group_state
-                                    .as_ref()
-                                    .is_some_and(|(_, collapsed)| *collapsed),
                             })
                         })
                         .unwrap_or(ContextMenuKind::Workspace { ws_idx: idx });
@@ -1219,6 +1257,9 @@ impl AppState {
         match crate::ui::mobile_switcher_target_at(self, mouse.column, mouse.row) {
             Some(crate::ui::MobileSwitcherTarget::NewWorkspace) => {
                 return MobileMouseResult::Action(MouseAction::NewWorkspace);
+            }
+            Some(crate::ui::MobileSwitcherTarget::Folder(folder_id)) => {
+                return MobileMouseResult::Action(MouseAction::ToggleWorkspaceFolder { folder_id });
             }
             Some(crate::ui::MobileSwitcherTarget::Workspace(ws_idx)) => {
                 self.mode = Mode::Terminal;
@@ -1494,7 +1535,9 @@ impl AppState {
     }
 
     fn chrome_press_pending(&self, source_id: crate::app::InputSourceId) -> bool {
-        self.tab_presses.contains_key(&source_id) || self.workspace_presses.contains_key(&source_id)
+        self.tab_presses.contains_key(&source_id)
+            || self.workspace_presses.contains_key(&source_id)
+            || self.workspace_folder_presses.contains_key(&source_id)
     }
 
     fn chrome_drag_owned_by_other(&self, source_id: crate::app::InputSourceId) -> bool {
@@ -1502,6 +1545,9 @@ impl AppState {
             matches!(
                 drag.target,
                 DragTarget::WorkspaceReorder {
+                    source_id: drag_source_id,
+                    ..
+                } | DragTarget::WorkspaceFolderReorder {
                     source_id: drag_source_id,
                     ..
                 } | DragTarget::TabReorder {
@@ -1515,12 +1561,23 @@ impl AppState {
     fn chrome_press_action(
         &mut self,
         workspace_press: Option<WorkspacePressState>,
+        folder_press: Option<WorkspaceFolderPressState>,
         tab_press: Option<TabPressState>,
     ) -> Option<MouseAction> {
         if let Some(press) = workspace_press {
             self.mode = Mode::Terminal;
             return Some(MouseAction::FocusWorkspace {
                 ws_idx: press.ws_idx,
+            });
+        }
+        if let Some(press) = folder_press {
+            let crate::workspace_layout::WorkspaceLayoutItem::Folder(folder) =
+                self.workspace_layout.items.get(press.layout_index)?
+            else {
+                return None;
+            };
+            return Some(MouseAction::ToggleWorkspaceFolder {
+                folder_id: folder.id.clone(),
             });
         }
         if let Some(press) = tab_press {
@@ -1541,6 +1598,9 @@ impl AppState {
                 DragTarget::WorkspaceReorder {
                     source_id: drag_source_id,
                     ..
+                } | DragTarget::WorkspaceFolderReorder {
+                    source_id: drag_source_id,
+                    ..
                 } | DragTarget::TabReorder {
                     source_id: drag_source_id,
                     ..
@@ -1555,6 +1615,7 @@ impl AppState {
     fn clear_chrome_press(&mut self, source_id: crate::app::InputSourceId) {
         self.tab_presses.remove(&source_id);
         self.workspace_presses.remove(&source_id);
+        self.workspace_folder_presses.remove(&source_id);
     }
 
     fn mouse_pane_focus_action(&self, pane_id: crate::layout::PaneId) -> Option<MouseAction> {
@@ -3185,7 +3246,10 @@ mod tests {
                 ..
             } if pane_id == target && source_pane_id == source
         ));
-        assert!(menu.items().contains(&"Swap with focused pane"));
+        assert!(menu
+            .items()
+            .iter()
+            .any(|item| item == "Swap with focused pane"));
     }
 
     #[tokio::test]
@@ -3635,12 +3699,18 @@ mod tests {
         app.state.selected = 0;
         app.state.mode = Mode::Terminal;
 
-        app.state.context_menu = Some(ContextMenuState {
+        let mut context_menu = ContextMenuState {
             kind: ContextMenuKind::Workspace { ws_idx: 1 },
             x: 2,
             y: 2,
-            list: MenuListState::new(1),
-        });
+            list: MenuListState::new(0),
+        };
+        context_menu.list.highlighted = context_menu
+            .items()
+            .iter()
+            .position(|item| item == "Close")
+            .unwrap();
+        app.state.context_menu = Some(context_menu);
         app.state.mode = Mode::ContextMenu;
         handle_context_menu_key(
             &mut app.state,
@@ -3675,19 +3745,34 @@ mod tests {
         app.state.active = Some(0);
         app.state.selected = 0;
         app.state.confirm_close = false;
-        app.state.context_menu = Some(ContextMenuState {
+        let mut context_menu = ContextMenuState {
             kind: ContextMenuKind::Workspace { ws_idx: 1 },
             x: 2,
             y: 2,
-            list: MenuListState::new(1),
-        });
+            list: MenuListState::new(0),
+        };
+        context_menu.list.highlighted = context_menu
+            .items()
+            .iter()
+            .position(|item| item == "Close")
+            .unwrap();
+        app.state.context_menu = Some(context_menu);
         app.state.mode = Mode::ContextMenu;
 
         let menu = app.state.context_menu_rect().unwrap();
+        let close_idx = app
+            .state
+            .context_menu
+            .as_ref()
+            .unwrap()
+            .items()
+            .iter()
+            .position(|item| item == "Close")
+            .unwrap();
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
             menu.x + 2,
-            menu.y + 2,
+            menu.y + 1 + close_idx as u16,
         ));
 
         assert_eq!(app.state.workspaces.len(), 1);
@@ -4356,7 +4441,7 @@ mod tests {
     }
 
     #[test]
-    fn clicking_pane_context_menu_close_last_parent_group_pane_keeps_confirmation_mode() {
+    fn clicking_pane_context_menu_close_last_parent_pane_closes_only_parent() {
         let mut app = app_for_mouse_test();
         let mut parent = Workspace::test_new("main");
         let pane_id = parent.tabs[0].root_pane;
@@ -4400,9 +4485,9 @@ mod tests {
             menu.y + 1 + close_idx as u16,
         ));
 
-        assert_eq!(app.state.selected, 0);
-        assert_eq!(app.state.mode, Mode::ConfirmClose);
-        assert_eq!(app.state.workspaces.len(), 2);
+        assert_eq!(app.state.mode, Mode::Terminal);
+        assert_eq!(app.state.workspaces.len(), 1);
+        assert_eq!(app.state.workspaces[0].display_name(), "issue");
         assert!(app.state.context_menu.is_none());
     }
 

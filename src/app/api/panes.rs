@@ -661,6 +661,7 @@ impl App {
                 .clone(),
             previous_worktree_space: self.state.workspaces[source_ws_idx].worktree_space.clone(),
             identity_cwd: self.state.workspaces[source_ws_idx].identity_cwd.clone(),
+            workspace_layout: self.state.workspace_layout.clone(),
         };
 
         if self.state.workspaces[source_ws_idx].tabs[source_tab_idx].zoomed {
@@ -842,7 +843,7 @@ impl App {
 
         let mut closed_workspace_id = None;
         if source_workspace_empty && cross_workspace {
-            self.state.workspaces.remove(source_ws_idx);
+            self.state.remove_workspace_at(source_ws_idx);
             closed_workspace_id = Some(previous_workspace_id.clone());
             if self.state.workspaces.is_empty() {
                 self.state.active = None;
@@ -937,8 +938,7 @@ impl App {
                     self.render_notify.clone(),
                     self.render_dirty.clone(),
                 );
-                self.state.workspaces.push(workspace);
-                let target_ws_idx = self.state.workspaces.len() - 1;
+                let target_ws_idx = self.state.push_workspace(workspace);
                 created_workspace = true;
                 created_tab = true;
                 (target_ws_idx, 0, moved_pane_id)
@@ -1048,6 +1048,7 @@ impl App {
         context: PaneMoveRecoveryContext,
         moved: crate::workspace::MovedPane,
     ) {
+        let workspace_layout = context.workspace_layout.clone();
         if let Some(ws_idx) = self.parse_workspace_id(&context.previous_workspace_id) {
             self.state.workspaces[ws_idx].create_tab_from_existing_pane(
                 moved,
@@ -1079,6 +1080,8 @@ impl App {
             }
             self.state.workspaces.insert(insert_idx, workspace);
         }
+        self.state.workspace_layout = workspace_layout;
+        self.state.normalize_workspace_layout();
         self.state.mark_session_dirty();
         self.schedule_session_save();
     }
@@ -1559,15 +1562,6 @@ impl App {
         };
         let workspace_id = self.public_workspace_id(ws_idx);
         let layout_update_target = self.layout_update_target_after_pane_removal(ws_idx, pane_id);
-        if self.state.close_pane_would_close_workspace(ws_idx, pane_id)
-            && self.state.confirm_implicit_worktree_group_close(ws_idx)
-        {
-            return Err(encode_error(
-                id,
-                "confirmation_required",
-                "closing this pane would close a worktree group",
-            ));
-        }
         let workspace_snapshot = self.workspace_info(ws_idx);
         let terminal_id = self.state.terminal_id_for_pane(ws_idx, pane_id);
         let should_close_workspace = {
@@ -1827,6 +1821,7 @@ struct PaneMoveRecoveryContext {
     previous_tab_label: Option<String>,
     previous_worktree_space: Option<crate::workspace::WorktreeSpaceMembership>,
     identity_cwd: std::path::PathBuf,
+    workspace_layout: crate::workspace_layout::WorkspaceLayout,
 }
 
 fn encode_unchanged_pane_move(
@@ -3204,6 +3199,7 @@ mod tests {
             previous_tab_label: app.state.workspaces[0].tabs[0].custom_name.clone(),
             previous_worktree_space: app.state.workspaces[0].worktree_space.clone(),
             identity_cwd: app.state.workspaces[0].identity_cwd.clone(),
+            workspace_layout: app.state.workspace_layout.clone(),
         };
         let taken = app.state.workspaces[0]
             .take_pane_for_move(source)

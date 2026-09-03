@@ -28,6 +28,7 @@ mod terminal_targets;
 mod terminal_titles;
 mod theme_sync;
 mod window_title;
+mod workspace_folders;
 mod worktrees;
 
 use std::collections::{HashMap, HashSet};
@@ -396,6 +397,7 @@ impl App {
         let mut restored_terminal_runtimes = crate::terminal::TerminalRuntimeRegistry::new();
         let (
             workspaces,
+            workspace_layout,
             active,
             selected,
             sidebar_width,
@@ -405,6 +407,7 @@ impl App {
         ) = if no_session {
             (
                 Vec::new(),
+                crate::workspace_layout::WorkspaceLayout::default(),
                 None,
                 0,
                 config.ui.sidebar_width,
@@ -437,6 +440,7 @@ impl App {
                 crate::logging::session_restored(0, "empty");
                 (
                     Vec::new(),
+                    snap.workspace_layout.clone(),
                     None,
                     0,
                     snap.sidebar_width.unwrap_or(config.ui.sidebar_width),
@@ -454,6 +458,7 @@ impl App {
                 let selected = snap.selected.min(ws.len().saturating_sub(1));
                 (
                     ws,
+                    snap.workspace_layout.clone(),
                     active,
                     selected,
                     snap.sidebar_width.unwrap_or(config.ui.sidebar_width),
@@ -469,6 +474,7 @@ impl App {
         } else {
             (
                 Vec::new(),
+                crate::workspace_layout::WorkspaceLayout::default(),
                 None,
                 0,
                 config.ui.sidebar_width,
@@ -543,6 +549,7 @@ impl App {
                     .unwrap_or_else(|| crate::session::DEFAULT_SESSION_NAME.to_string())
             }),
             workspaces,
+            workspace_layout,
             active,
             previous_pane_focus: None,
             selected,
@@ -566,12 +573,16 @@ impl App {
             creating_new_tab: false,
             requested_new_tab_name: None,
             pending_workspace_create_cwd: None,
+            pending_workspace_folder_id: None,
             rename_pane_target: None,
             worktree_create: None,
             worktree_open: None,
             worktree_remove: None,
             worktree_directory,
             collapsed_space_keys,
+            collapsed_folder_ids: std::collections::HashSet::new(),
+            selected_folder_id: None,
+            editing_folder_id: None,
             request_complete_onboarding: false,
             name_input: String::new(),
             name_input_replace_on_type: false,
@@ -598,6 +609,7 @@ impl App {
                 layout: state::ViewLayout::Desktop,
                 sidebar_rect: Rect::default(),
                 workspace_card_areas: Vec::new(),
+                workspace_folder_areas: Vec::new(),
                 tab_bar_rect: Rect::default(),
                 tab_hit_areas: Vec::new(),
                 tab_scroll_left_hit_area: Rect::default(),
@@ -612,6 +624,7 @@ impl App {
             },
             drag: None,
             workspace_presses: HashMap::new(),
+            workspace_folder_presses: HashMap::new(),
             tab_presses: HashMap::new(),
             selection: None,
             selection_autoscroll: None,
@@ -710,6 +723,7 @@ impl App {
         };
 
         state.terminals = restored_terminals;
+        state.normalize_workspace_layout();
 
         for ws_idx in 0..state.workspaces.len() {
             let cwd = state.workspaces[ws_idx]
@@ -854,6 +868,8 @@ impl App {
         app.state.detach_exits = false;
         app.state.pane_id_aliases = pane_id_aliases;
         app.state.workspaces = workspaces;
+        app.state.workspace_layout = snapshot.workspace_layout.clone();
+        app.state.normalize_workspace_layout();
         app.state.terminals = terminals;
         app.terminal_runtimes = runtimes.into();
         app.state.active = snapshot
@@ -981,12 +997,14 @@ impl App {
 
             if self.state.request_new_workspace {
                 self.state.request_new_workspace = false;
+                let folder_id = self.state.pending_workspace_folder_id.take();
                 self.runtime_workspace_create(
                     "tui.workspace.create",
                     crate::api::schema::WorkspaceCreateParams {
                         cwd: None,
                         focus: true,
                         label: None,
+                        folder_id,
                         env: Default::default(),
                     },
                 );
@@ -1020,12 +1038,14 @@ impl App {
             }
 
             if let Some(cwd) = self.state.request_new_workspace_cwd.take() {
+                let folder_id = self.state.pending_workspace_folder_id.take();
                 self.runtime_workspace_create(
                     "tui.workspace.create_cwd",
                     crate::api::schema::WorkspaceCreateParams {
                         cwd: Some(cwd.display().to_string()),
                         focus: true,
                         label: None,
+                        folder_id,
                         env: Default::default(),
                     },
                 );
@@ -1909,7 +1929,10 @@ impl App {
             Mode::Copy => {
                 self.handle_copy_mode_key(key);
             }
-            Mode::RenameWorkspace | Mode::RenameTab | Mode::RenamePane => {
+            Mode::RenameWorkspace
+            | Mode::RenameWorkspaceFolder
+            | Mode::RenameTab
+            | Mode::RenamePane => {
                 self.handle_rename_key_via_api(key_event);
             }
             Mode::NewLinkedWorktree => {
@@ -4911,7 +4934,7 @@ mod tests {
     }
 
     #[test]
-    fn pane_close_request_requires_confirmation_before_closing_parent_worktree_group() {
+    fn pane_close_request_closes_only_parent_worktree_workspace() {
         let mut app = test_app();
         let mut parent = Workspace::test_new("api-pane-close-parent");
         parent.worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
@@ -4945,10 +4968,12 @@ mod tests {
         });
         let response: serde_json::Value = serde_json::from_str(&response).unwrap();
 
-        assert_eq!(response["error"]["code"], "confirmation_required");
-        assert_eq!(app.state.mode, Mode::ConfirmClose);
-        assert_eq!(app.state.selected, 0);
-        assert_eq!(app.state.workspaces.len(), 2);
+        assert_eq!(response["result"]["type"], "ok");
+        assert_eq!(app.state.workspaces.len(), 1);
+        assert_eq!(
+            app.state.workspaces[0].display_name(),
+            "api-pane-close-child"
+        );
     }
 
     #[test]
@@ -6192,12 +6217,18 @@ last_pane = "prefix+tab"
         app.state.active = Some(0);
         app.state.selected = 0;
         app.state.confirm_close = false;
-        app.state.context_menu = Some(state::ContextMenuState {
+        let mut context_menu = state::ContextMenuState {
             kind: state::ContextMenuKind::Workspace { ws_idx: 1 },
             x: 2,
             y: 2,
-            list: state::MenuListState::new(1),
-        });
+            list: state::MenuListState::new(0),
+        };
+        context_menu.list.highlighted = context_menu
+            .items()
+            .iter()
+            .position(|item| item == "Close")
+            .unwrap();
+        app.state.context_menu = Some(context_menu);
         app.state.mode = Mode::ContextMenu;
 
         app.route_client_input(b"\r".to_vec());

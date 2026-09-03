@@ -136,6 +136,10 @@ impl ActiveSubscription {
                 event_kind: crate::api::schema::EventKind::WorkspaceReordered,
                 last_sequence: 0,
             })),
+            Subscription::WorkspaceLayoutUpdated {} => Ok(Self::Event(ActiveEventSubscription {
+                event_kind: crate::api::schema::EventKind::WorkspaceLayoutUpdated,
+                last_sequence: 0,
+            })),
             Subscription::WorkspaceClosed {} => Ok(Self::Event(ActiveEventSubscription {
                 event_kind: crate::api::schema::EventKind::WorkspaceClosed,
                 last_sequence: 0,

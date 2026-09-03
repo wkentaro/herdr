@@ -3,7 +3,7 @@
 ## Unreleased
 
 ### Changed
-- Restored worktree-based space grouping and direct entry into linked worktrees.
+- Replaced automatic worktree-based Space grouping with persistent, one-level folders that users create, rename, reorder, and populate manually from the sidebar.
 
 ## [0.8.2-fork.1] - 2026-08-22
 

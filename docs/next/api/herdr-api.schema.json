@@ -239,6 +239,29 @@
             {
               "properties": {
                 "type": {
+                  "const": "workspace_layout_updated",
+                  "type": "string"
+                },
+                "workspace_layout": {
+                  "$ref": "#/schemas/event/$defs/WorkspaceLayoutInfo"
+                },
+                "workspaces": {
+                  "items": {
+                    "$ref": "#/schemas/event/$defs/WorkspaceInfo"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "type",
+                "workspace_layout",
+                "workspaces"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "type": {
                   "const": "workspace_focused",
                   "type": "string"
                 },
@@ -735,6 +758,7 @@
             "workspace_renamed",
             "workspace_moved",
             "workspace_reordered",
+            "workspace_layout_updated",
             "workspace_focused",
             "worktree_created",
             "worktree_opened",
@@ -1132,6 +1156,67 @@
             "agent_status"
           ],
           "type": "object"
+        },
+        "WorkspaceLayoutInfo": {
+          "properties": {
+            "items": {
+              "items": {
+                "$ref": "#/schemas/event/$defs/WorkspaceLayoutItemInfo"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "items"
+          ],
+          "type": "object"
+        },
+        "WorkspaceLayoutItemInfo": {
+          "oneOf": [
+            {
+              "properties": {
+                "type": {
+                  "const": "workspace",
+                  "type": "string"
+                },
+                "workspace_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "workspace_id"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "folder_id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "type": {
+                  "const": "folder",
+                  "type": "string"
+                },
+                "workspace_ids": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "type",
+                "folder_id",
+                "name",
+                "workspace_ids"
+              ],
+              "type": "object"
+            }
+          ]
         },
         "WorkspaceWorktreeInfo": {
           "properties": {
@@ -3756,6 +3841,18 @@
             {
               "properties": {
                 "type": {
+                  "const": "workspace.layout_updated",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "type": {
                   "const": "workspace.closed",
                   "type": "string"
                 }
@@ -4163,6 +4260,12 @@
               "default": false,
               "type": "boolean"
             },
+            "folder_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "label": {
               "type": [
                 "string",
@@ -4170,6 +4273,60 @@
               ]
             }
           },
+          "type": "object"
+        },
+        "WorkspaceFolderCreateParams": {
+          "properties": {
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "name"
+          ],
+          "type": "object"
+        },
+        "WorkspaceFolderMoveParams": {
+          "properties": {
+            "folder_id": {
+              "type": "string"
+            },
+            "insert_index": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "folder_id",
+            "insert_index"
+          ],
+          "type": "object"
+        },
+        "WorkspaceFolderRenameParams": {
+          "properties": {
+            "folder_id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "folder_id",
+            "name"
+          ],
+          "type": "object"
+        },
+        "WorkspaceFolderTarget": {
+          "properties": {
+            "folder_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "folder_id"
+          ],
           "type": "object"
         },
         "WorkspaceMoveBlockParams": {
@@ -4194,6 +4351,12 @@
         },
         "WorkspaceMoveParams": {
           "properties": {
+            "folder_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "insert_index": {
               "format": "uint",
               "minimum": 0,
@@ -4707,6 +4870,70 @@
             },
             "params": {
               "$ref": "#/schemas/request/$defs/WorkspaceMoveBlockParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "workspace.folder.create",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/WorkspaceFolderCreateParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "workspace.folder.rename",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/WorkspaceFolderRenameParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "workspace.folder.delete",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/WorkspaceFolderTarget"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "workspace.folder.move",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/WorkspaceFolderMoveParams"
             }
           },
           "required": [
@@ -6529,6 +6756,29 @@
             {
               "properties": {
                 "type": {
+                  "const": "workspace_layout_updated",
+                  "type": "string"
+                },
+                "workspace_layout": {
+                  "$ref": "#/schemas/success_response/$defs/WorkspaceLayoutInfo"
+                },
+                "workspaces": {
+                  "items": {
+                    "$ref": "#/schemas/success_response/$defs/WorkspaceInfo"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "type",
+                "workspace_layout",
+                "workspaces"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "type": {
                   "const": "workspace_focused",
                   "type": "string"
                 },
@@ -7040,6 +7290,7 @@
             "workspace_renamed",
             "workspace_moved",
             "workspace_reordered",
+            "workspace_layout_updated",
             "workspace_focused",
             "worktree_created",
             "worktree_opened",
@@ -8734,6 +8985,12 @@
                   "const": "workspace_list",
                   "type": "string"
                 },
+                "workspace_layout": {
+                  "$ref": "#/schemas/success_response/$defs/WorkspaceLayoutInfo",
+                  "default": {
+                    "items": []
+                  }
+                },
                 "workspaces": {
                   "items": {
                     "$ref": "#/schemas/success_response/$defs/WorkspaceInfo"
@@ -9885,6 +10142,12 @@
             "version": {
               "type": "string"
             },
+            "workspace_layout": {
+              "$ref": "#/schemas/success_response/$defs/WorkspaceLayoutInfo",
+              "default": {
+                "items": []
+              }
+            },
             "workspaces": {
               "items": {
                 "$ref": "#/schemas/success_response/$defs/WorkspaceInfo"
@@ -10013,6 +10276,67 @@
             "agent_status"
           ],
           "type": "object"
+        },
+        "WorkspaceLayoutInfo": {
+          "properties": {
+            "items": {
+              "items": {
+                "$ref": "#/schemas/success_response/$defs/WorkspaceLayoutItemInfo"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "items"
+          ],
+          "type": "object"
+        },
+        "WorkspaceLayoutItemInfo": {
+          "oneOf": [
+            {
+              "properties": {
+                "type": {
+                  "const": "workspace",
+                  "type": "string"
+                },
+                "workspace_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "workspace_id"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "folder_id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "type": {
+                  "const": "folder",
+                  "type": "string"
+                },
+                "workspace_ids": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "type",
+                "folder_id",
+                "name",
+                "workspace_ids"
+              ],
+              "type": "object"
+            }
+          ]
         },
         "WorkspaceWorktreeInfo": {
           "properties": {
