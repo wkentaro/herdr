@@ -193,7 +193,11 @@ pub(super) fn agent_panel_status_key(state: AgentState, seen: bool) -> &'static 
     }
 }
 
-fn workspace_row_height(app: &AppState, ws: &crate::workspace::Workspace, indented: bool) -> u16 {
+fn count_workspace_label_rows(
+    app: &AppState,
+    ws: &crate::workspace::Workspace,
+    indented: bool,
+) -> u16 {
     let (state, seen) = ws.aggregate_state(&app.terminals);
     let label = if indented {
         grouped_child_display_label(
@@ -219,6 +223,18 @@ fn workspace_row_height(app: &AppState, ws: &crate::workspace::Workspace, indent
     .len()
     .max(1)
     .min(u16::MAX as usize) as u16
+}
+
+fn count_workspace_tab_rows(ws: &crate::workspace::Workspace) -> u16 {
+    if ws.tabs.len() > 1 {
+        ws.tabs.len().min(u16::MAX as usize) as u16
+    } else {
+        0
+    }
+}
+
+fn workspace_row_height(app: &AppState, ws: &crate::workspace::Workspace, indented: bool) -> u16 {
+    count_workspace_label_rows(app, ws, indented).saturating_add(count_workspace_tab_rows(ws))
 }
 
 fn workspace_row_height_in_body(
@@ -683,6 +699,7 @@ pub(crate) fn compute_workspace_list_areas(
                 let Some(ws) = app.workspaces.get(*ws_idx) else {
                     continue;
                 };
+                let workspace_height = count_workspace_label_rows(app, ws, *indented);
                 let row_height = workspace_row_height_in_body(app, ws, *indented, body.height);
                 let gap = workspace_entry_gap(app, &entries, entry_idx);
                 if row_y.saturating_add(row_height) > body_bottom {
@@ -691,6 +708,7 @@ pub(crate) fn compute_workspace_list_areas(
                 cards.push(crate::app::state::WorkspaceCardArea {
                     ws_idx: *ws_idx,
                     rect: Rect::new(body.x, row_y, body.width, row_height),
+                    workspace_height: workspace_height.min(row_height),
                     indented: *indented,
                 });
                 row_y = row_y
@@ -1264,7 +1282,12 @@ fn render_workspace_list(
                 p.active_row_bg
             };
             let buf = frame.buffer_mut();
-            for y in row_y..row_y + row_height {
+            let highlight_height = if is_dragged {
+                row_height
+            } else {
+                card.workspace_height
+            };
+            for y in row_y..row_y + highlight_height {
                 if y >= list_bottom {
                     break;
                 }
@@ -1385,6 +1408,60 @@ fn render_workspace_list(
                 )),
                 workspace_group_chevron_rect(card),
             );
+        }
+
+        if ws.tabs.len() > 1 {
+            for (tab_idx, _) in ws.tabs.iter().enumerate() {
+                let tab_y = row_y
+                    .saturating_add(card.workspace_height)
+                    .saturating_add(tab_idx.min(u16::MAX as usize) as u16);
+                if tab_y >= row_y.saturating_add(row_height) || tab_y >= list_bottom {
+                    break;
+                }
+                let is_active_tab = is_active && tab_idx == ws.active_tab;
+                if is_active_tab {
+                    let buf = frame.buffer_mut();
+                    for x in card.rect.x..card.rect.x + card.rect.width {
+                        buf[(x, tab_y)].set_style(Style::default().bg(p.active_row_bg));
+                    }
+                }
+                let prefix = if card.indented {
+                    if is_last_child {
+                        "      "
+                    } else {
+                        "   │  "
+                    }
+                } else {
+                    "   "
+                };
+                let connector = if tab_idx + 1 == ws.tabs.len() {
+                    "└─ "
+                } else {
+                    "├─ "
+                };
+                let label = ws
+                    .tab_display_name(tab_idx)
+                    .unwrap_or_else(|| (tab_idx + 1).to_string());
+                let label = truncate_end(
+                    &label,
+                    card.rect.width.saturating_sub(
+                        display_width_u16(prefix).saturating_add(display_width_u16(connector)),
+                    ) as usize,
+                );
+                let label_style = if is_active_tab {
+                    Style::default().fg(p.text).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(p.overlay0)
+                };
+                frame.render_widget(
+                    Paragraph::new(Line::from(vec![
+                        Span::styled(prefix, Style::default().fg(p.overlay0)),
+                        Span::styled(connector, Style::default().fg(p.overlay0)),
+                        Span::styled(label, label_style),
+                    ])),
+                    Rect::new(card.rect.x, tab_y, card.rect.width, 1),
+                );
+            }
         }
     }
 
@@ -2662,6 +2739,42 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
     }
 
     #[test]
+    fn workspace_list_shows_tabs_only_when_workspace_has_multiple_tabs() {
+        let mut single = Workspace::test_new("single");
+        single.tabs[0].set_custom_name("notes".into());
+        let mut multi = Workspace::test_new("multi");
+        multi.tabs[0].set_custom_name("editor".into());
+        multi.test_add_tab(Some("tests"));
+
+        let mut app = AppState::test_new();
+        app.workspaces = vec![single, multi];
+        app.sidebar_spaces.rows = vec![vec![crate::config::SpaceSidebarToken::Workspace]];
+        let area = Rect::new(0, 0, 30, 20);
+        app.view.workspace_card_areas = compute_workspace_card_areas(&app, area);
+        let list_area = workspace_list_rect(area, app.sidebar_section_split);
+
+        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+        terminal
+            .draw(|frame| {
+                render_workspace_list(
+                    &app,
+                    &TerminalRuntimeRegistry::new(),
+                    frame,
+                    list_area,
+                    false,
+                )
+            })
+            .unwrap();
+
+        let cards = &app.view.workspace_card_areas;
+        assert_eq!(cards[0].rect.height, 1);
+        assert_eq!(cards[1].rect.height, 3);
+        let buffer = terminal.backend().buffer();
+        assert!(row_text(buffer, cards[1].rect.y + 1, area.width).contains("├─ editor"));
+        assert!(row_text(buffer, cards[1].rect.y + 2, area.width).contains("└─ tests"));
+    }
+
+    #[test]
     fn workspace_list_truncates_cjk_branch_without_panic() {
         let mut app = crate::app::state::AppState::test_new();
         let mut ws = Workspace::test_new("repo");
@@ -2673,6 +2786,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         app.view.workspace_card_areas = vec![crate::app::state::WorkspaceCardArea {
             ws_idx: 0,
             rect: Rect::new(0, 1, 15, 2),
+            workspace_height: 2,
             indented: false,
         }];
 
@@ -2725,6 +2839,8 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             workspace_with_worktree_space("review", Some("repo-key"), "/repo/herdr-review"),
             Workspace::test_new("notes"),
         ];
+        app.workspaces[1].tabs[0].set_custom_name("editor".into());
+        app.workspaces[1].test_add_tab(Some("tests"));
         app.sidebar_spaces.rows = vec![vec![
             crate::config::SpaceSidebarToken::StateIcon,
             crate::config::SpaceSidebarToken::Workspace,
@@ -2753,6 +2869,14 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let plain_name_x = find_symbol_x(buffer, cards[3].rect.y, cards[3].rect.width, "n");
         assert_eq!(parent_name_x, plain_name_x);
         assert_eq!(buffer[(cards[1].rect.x + 3, cards[1].rect.y)].symbol(), "├");
+        assert_eq!(
+            buffer[(cards[1].rect.x + 3, cards[1].rect.y + 1)].symbol(),
+            "│"
+        );
+        assert_eq!(
+            buffer[(cards[1].rect.x + 6, cards[1].rect.y + 1)].symbol(),
+            "├"
+        );
         assert_eq!(buffer[(cards[2].rect.x + 3, cards[2].rect.y)].symbol(), "└");
         assert_eq!(
             buffer[(cards[0].rect.x + cards[0].rect.width - 1, cards[0].rect.y)].symbol(),
