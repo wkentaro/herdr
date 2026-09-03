@@ -198,7 +198,6 @@ fn count_workspace_label_rows(
     ws: &crate::workspace::Workspace,
     indented: bool,
 ) -> u16 {
-    let (state, seen) = ws.aggregate_state(&app.terminals);
     let label = if indented {
         grouped_child_display_label(
             &ws.display_name_from_terminals(&app.terminals),
@@ -214,7 +213,7 @@ fn count_workspace_label_rows(
         SpaceTokenContext {
             workspace: &label,
             branch: ws.branch().as_deref(),
-            state_text: state_label(state, seen),
+            state_text: None,
             ahead_behind: ws.git_ahead_behind(),
             tokens: &token_values,
             suppress_git_details: indented,
@@ -226,11 +225,7 @@ fn count_workspace_label_rows(
 }
 
 fn count_workspace_tab_rows(ws: &crate::workspace::Workspace) -> u16 {
-    if ws.tabs.len() > 1 {
-        ws.tabs.len().min(u16::MAX as usize) as u16
-    } else {
-        0
-    }
+    ws.tabs.len().min(u16::MAX as usize) as u16
 }
 
 fn workspace_row_height(app: &AppState, ws: &crate::workspace::Workspace, indented: bool) -> u16 {
@@ -252,25 +247,6 @@ fn workspace_entry_gap(app: &AppState, entries: &[WorkspaceListEntry], entry_idx
     } else {
         0
     }
-}
-
-fn workspace_attention_priority(state: AgentState, seen: bool) -> u8 {
-    match (state, seen) {
-        (AgentState::Blocked, _) => 4,
-        (AgentState::Idle, false) => 3,
-        (AgentState::Working, _) => 2,
-        (AgentState::Idle, true) => 1,
-        (AgentState::Unknown, _) => 0,
-    }
-}
-
-fn space_aggregate_state(app: &AppState, key: &str) -> (AgentState, bool) {
-    app.workspaces
-        .iter()
-        .filter(|ws| ws.worktree_space().is_some_and(|space| space.key == key))
-        .map(|ws| ws.aggregate_state(&app.terminals))
-        .max_by_key(|(state, seen)| workspace_attention_priority(*state, *seen))
-        .unwrap_or((AgentState::Unknown, true))
 }
 
 pub(crate) fn workspace_parent_group_state(
@@ -1273,7 +1249,6 @@ fn render_workspace_list(
         let is_active = Some(i) == app.active;
         let is_dragged = dragged_ws_idx == Some(i);
         let highlighted = selected || is_active || is_dragged;
-        let (agg_state, agg_seen) = ws.aggregate_state(&app.terminals);
 
         if highlighted {
             let bg = if selected {
@@ -1324,15 +1299,6 @@ fn render_workspace_list(
                     )
                 })
                 .is_none_or(|entry_idx| !next_entry_is_indented_workspace(&entries, entry_idx));
-        let (display_state, display_seen) = parent_group
-            .as_ref()
-            .filter(|(_, collapsed)| *collapsed)
-            .map(|(key, _)| space_aggregate_state(app, key))
-            .unwrap_or((agg_state, agg_seen));
-        let state_icon = state_icon(display_state, display_seen, app.status_indicators, p);
-        let state_text_style = Style::default()
-            .fg(state_label_color(display_state, display_seen, p))
-            .add_modifier(Modifier::DIM);
         let branch_style = Style::default().fg(if selected || is_active {
             p.mauve
         } else {
@@ -1344,7 +1310,7 @@ fn render_workspace_list(
             SpaceTokenContext {
                 workspace: &display_label,
                 branch: ws.branch().as_deref(),
-                state_text: state_label(display_state, display_seen),
+                state_text: None,
                 ahead_behind: ws.git_ahead_behind(),
                 tokens: &token_values,
                 suppress_git_details: card.indented,
@@ -1386,8 +1352,8 @@ fn render_workspace_list(
             };
             spans.extend(resolved_token_spans(
                 resolved,
-                state_icon,
-                state_text_style,
+                ("", Style::default()),
+                Style::default(),
                 name_style,
                 branch_style,
                 branch_style,
@@ -1412,60 +1378,65 @@ fn render_workspace_list(
             );
         }
 
-        if ws.tabs.len() > 1 {
-            for (tab_idx, _) in ws.tabs.iter().enumerate() {
-                let tab_y = row_y
-                    .saturating_add(card.workspace_height)
-                    .saturating_add(tab_idx.min(u16::MAX as usize) as u16);
-                if tab_y >= row_y.saturating_add(row_height) || tab_y >= list_bottom {
-                    break;
-                }
-                let is_active_tab = is_active && tab_idx == ws.active_tab;
-                if is_active_tab {
-                    let buf = frame.buffer_mut();
-                    for x in card.rect.x..card.rect.x + card.rect.width {
-                        buf[(x, tab_y)].set_style(Style::default().bg(p.active_row_bg));
-                    }
-                }
-                let prefix = if card.indented {
-                    if is_last_child {
-                        "      "
-                    } else {
-                        "   │  "
-                    }
-                } else {
-                    "   "
-                };
-                let connector = if tab_idx + 1 == ws.tabs.len() {
-                    "└─ "
-                } else {
-                    "├─ "
-                };
-                let label = ws
-                    .tab_display_name(tab_idx)
-                    .unwrap_or_else(|| (tab_idx + 1).to_string());
-                let label = truncate_end(
-                    &label,
-                    card.rect.width.saturating_sub(
-                        display_width_u16(prefix).saturating_add(display_width_u16(connector)),
-                    ) as usize,
-                );
-                let label_style = if is_active_tab {
-                    Style::default().fg(p.text).add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(p.overlay0)
-                };
-                frame.buffer_mut().set_line(
-                    card.rect.x,
-                    tab_y,
-                    &Line::from(vec![
-                        Span::styled(prefix, Style::default().fg(p.overlay0)),
-                        Span::styled(connector, Style::default().fg(p.overlay0)),
-                        Span::styled(label, label_style),
-                    ]),
-                    card.rect.width,
-                );
+        for (tab_idx, tab) in ws.tabs.iter().enumerate() {
+            let tab_y = row_y
+                .saturating_add(card.workspace_height)
+                .saturating_add(tab_idx.min(u16::MAX as usize) as u16);
+            if tab_y >= row_y.saturating_add(row_height) || tab_y >= list_bottom {
+                break;
             }
+            let is_active_tab = is_active && tab_idx == ws.active_tab;
+            if is_active_tab {
+                let buf = frame.buffer_mut();
+                for x in card.rect.x..card.rect.x + card.rect.width {
+                    buf[(x, tab_y)].set_style(Style::default().bg(p.active_row_bg));
+                }
+            }
+            let prefix = if card.indented {
+                if is_last_child {
+                    "      "
+                } else {
+                    "   │  "
+                }
+            } else {
+                "   "
+            };
+            let connector = if tab_idx + 1 == ws.tabs.len() {
+                "└─ "
+            } else {
+                "├─ "
+            };
+            let label = ws
+                .tab_display_name(tab_idx)
+                .unwrap_or_else(|| (tab_idx + 1).to_string());
+            let label = truncate_end(
+                &label,
+                card.rect.width.saturating_sub(
+                    display_width_u16(prefix)
+                        .saturating_add(display_width_u16(connector))
+                        .saturating_add(2),
+                ) as usize,
+            );
+            let (tab_state, tab_seen) = tab.aggregate_state(&app.terminals);
+            let (tab_icon, tab_icon_style) =
+                state_icon(tab_state, tab_seen, app.status_indicators, p);
+            let label_style = if is_active_tab {
+                Style::default().fg(p.text).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(p.overlay0)
+            };
+            frame.buffer_mut().set_line(
+                card.rect.x,
+                tab_y,
+                &Line::from(vec![
+                    Span::styled(prefix, Style::default().fg(p.overlay0)),
+                    Span::styled(connector, Style::default().fg(p.overlay0)),
+                    Span::styled(tab_icon, tab_icon_style),
+                    Span::raw(" "),
+                    Span::styled(label, label_style),
+                ]),
+                card.rect.width,
+            );
         }
     }
 
@@ -2743,7 +2714,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
     }
 
     #[test]
-    fn workspace_list_shows_tabs_only_when_workspace_has_multiple_tabs() {
+    fn workspace_list_shows_tabs_for_every_workspace() {
         let mut single = Workspace::test_new("single");
         single.tabs[0].set_custom_name("notes".into());
         let mut multi = Workspace::test_new("multi");
@@ -2752,7 +2723,16 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
 
         let mut app = AppState::test_new();
         app.workspaces = vec![single, multi];
-        app.sidebar_spaces.rows = vec![vec![crate::config::SpaceSidebarToken::Workspace]];
+        app.ensure_test_terminals();
+        let pane_id = app.workspaces[0].tabs[0].root_pane;
+        let terminal_id = app.workspaces[0].tabs[0].panes[&pane_id]
+            .attached_terminal_id
+            .clone();
+        app.terminals.get_mut(&terminal_id).unwrap().state = AgentState::Blocked;
+        app.sidebar_spaces.rows = vec![vec![
+            crate::config::SpaceSidebarToken::StateIcon,
+            crate::config::SpaceSidebarToken::Workspace,
+        ]];
         let area = Rect::new(0, 0, 30, 20);
         app.view.workspace_card_areas = compute_workspace_card_areas(&app, area);
         let list_area = workspace_list_rect(area, app.sidebar_section_split);
@@ -2771,11 +2751,14 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             .unwrap();
 
         let cards = &app.view.workspace_card_areas;
-        assert_eq!(cards[0].rect.height, 1);
+        assert_eq!(cards[0].rect.height, 2);
         assert_eq!(cards[1].rect.height, 3);
         let buffer = terminal.backend().buffer();
-        assert!(row_text(buffer, cards[1].rect.y + 1, area.width).contains("├─ editor"));
-        assert!(row_text(buffer, cards[1].rect.y + 2, area.width).contains("└─ tests"));
+        assert!(row_text(buffer, cards[0].rect.y, area.width).contains("single"));
+        assert!(!row_text(buffer, cards[0].rect.y, area.width).contains('●'));
+        assert!(row_text(buffer, cards[0].rect.y + 1, area.width).contains("└─ ● notes"));
+        assert!(row_text(buffer, cards[1].rect.y + 1, area.width).contains("├─ · editor"));
+        assert!(row_text(buffer, cards[1].rect.y + 2, area.width).contains("└─ · tests"));
     }
 
     #[test]
@@ -2850,7 +2833,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             crate::config::SpaceSidebarToken::Workspace,
         ]];
         app.sidebar_spaces.row_gap = 0;
-        let area = Rect::new(0, 0, 30, 20);
+        let area = Rect::new(0, 0, 30, 24);
         app.view.workspace_card_areas = compute_workspace_card_areas(&app, area);
         let list_area = workspace_list_rect(area, app.sidebar_section_split);
 
@@ -2898,7 +2881,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         ];
         app.sidebar_spaces.rows = vec![vec![crate::config::SpaceSidebarToken::Workspace]];
         app.sidebar_spaces.row_gap = 0;
-        let area = Rect::new(0, 0, 30, 10);
+        let area = Rect::new(0, 0, 30, 14);
         app.view.workspace_card_areas = compute_workspace_card_areas(&app, area);
         assert_eq!(app.view.workspace_card_areas.len(), 2);
         let list_area = workspace_list_rect(area, app.sidebar_section_split);
@@ -2967,16 +2950,16 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             spacious[3].rect.y,
             spacious[2].rect.y + spacious[2].rect.height + 2
         );
-        let spacious_metrics = workspace_list_scroll_metrics(&app, Rect::new(0, 0, 30, 7));
+        let spacious_metrics = workspace_list_scroll_metrics(&app, Rect::new(0, 0, 30, 11));
         assert_eq!(spacious_metrics.viewport_rows, 3);
-        assert_eq!(spacious_metrics.max_offset_from_bottom, 2);
+        assert_eq!(spacious_metrics.max_offset_from_bottom, 1);
 
         app.sidebar_spaces.row_gap = 0;
         let (packed, _) = compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 30));
         assert!(packed
             .windows(2)
             .all(|pair| pair[1].rect.y == pair[0].rect.y + pair[0].rect.height));
-        let packed_metrics = workspace_list_scroll_metrics(&app, Rect::new(0, 0, 30, 7));
+        let packed_metrics = workspace_list_scroll_metrics(&app, Rect::new(0, 0, 30, 11));
         assert_eq!(packed_metrics.viewport_rows, 4);
         assert_eq!(packed_metrics.max_offset_from_bottom, 0);
     }
@@ -3001,7 +2984,13 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             crate::app::state::WorkspaceDropTarget::Before(2),
         )
         .unwrap();
-        assert_eq!(indicator_row, app.view.workspace_card_areas[1].rect.y);
+        assert_eq!(
+            indicator_row,
+            app.view.workspace_card_areas[1]
+                .rect
+                .y
+                .saturating_add(app.view.workspace_card_areas[1].rect.height - 1)
+        );
         app.drag = Some(crate::app::state::DragState {
             target: crate::app::state::DragTarget::WorkspaceReorder {
                 source_id: 0,

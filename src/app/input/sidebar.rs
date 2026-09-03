@@ -334,9 +334,6 @@ impl AppState {
             let tab_idx =
                 row.checked_sub(card.rect.y.saturating_add(card.workspace_height))? as usize;
             let workspace = self.workspaces.get(card.ws_idx)?;
-            if workspace.tabs.len() <= 1 {
-                return None;
-            }
             let tab = workspace.tabs.get(tab_idx)?;
             Some((card.ws_idx, tab.layout.focused()))
         })
@@ -1264,6 +1261,27 @@ mod tests {
     }
 
     #[test]
+    fn clicking_single_sidebar_tab_switches_workspace() {
+        let mut app = app_for_mouse_test();
+        app.state.workspaces = vec![Workspace::test_new("first"), Workspace::test_new("second")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
+        let card = app.state.view.workspace_card_areas[1];
+        let tab_row = card.rect.y + card.workspace_height;
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            card.rect.x + 4,
+            tab_row,
+        ));
+
+        assert_eq!(app.state.active, Some(1));
+        assert_eq!(app.state.selected, 1);
+        assert!(app.state.workspace_presses.is_empty());
+    }
+
+    #[test]
     fn clicking_worktree_parent_row_focuses_workspace_without_toggling() {
         let mut app = app_for_mouse_test();
         app.state.workspaces = vec![Workspace::test_new("main"), Workspace::test_new("issue")];
@@ -1383,7 +1401,10 @@ mod tests {
         app.state.active = Some(1);
         app.state.selected = 2;
         crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
-        let packed_boundary_row = app.state.view.workspace_card_areas[1].rect.y;
+        let packed_boundary_row = app.state.view.workspace_card_areas[2]
+            .rect
+            .y
+            .saturating_sub(1);
         assert_eq!(
             app.state.workspace_drop_target_at_row(packed_boundary_row),
             Some(crate::app::state::WorkspaceDropTarget::Before(2))
@@ -1633,6 +1654,8 @@ mod tests {
             .cwd = second_repo.clone();
         app.state.sidebar_spaces.row_gap = 1;
         crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
+        let gap_below_first = app.state.view.workspace_card_areas[0].rect.y
+            + app.state.view.workspace_card_areas[0].rect.height;
 
         assert_eq!(
             app.state.workspace_drop_target_at_row(0),
@@ -1647,7 +1670,7 @@ mod tests {
             Some(crate::app::state::WorkspaceDropTarget::Before(0))
         );
         assert_eq!(
-            app.state.workspace_drop_target_at_row(3),
+            app.state.workspace_drop_target_at_row(gap_below_first),
             Some(crate::app::state::WorkspaceDropTarget::Before(1))
         );
 
@@ -1663,7 +1686,7 @@ mod tests {
             Workspace::test_new("b"),
             Workspace::test_new("c"),
         ];
-        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 24));
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 32));
 
         let cards = &app.state.view.workspace_card_areas;
         let bottom_slot = crate::ui::workspace_drop_indicator_row(

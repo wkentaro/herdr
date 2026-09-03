@@ -91,7 +91,7 @@ pub(super) fn agent_rows(
 pub(super) struct SpaceTokenContext<'a> {
     pub workspace: &'a str,
     pub branch: Option<&'a str>,
-    pub state_text: &'a str,
+    pub state_text: Option<&'a str>,
     pub ahead_behind: Option<(usize, usize)>,
     pub tokens: &'a std::collections::HashMap<String, String>,
     pub suppress_git_details: bool,
@@ -110,10 +110,12 @@ pub(super) fn space_rows(
                 .filter_map(|configured| {
                     let (token, style) = configured.parts();
                     let kind = match token {
-                        SpaceSidebarToken::StateIcon => Some(ResolvedTokenKind::StateIcon),
-                        SpaceSidebarToken::StateText => {
-                            Some(ResolvedTokenKind::StateText(context.state_text.to_string()))
+                        SpaceSidebarToken::StateIcon => {
+                            context.state_text.map(|_| ResolvedTokenKind::StateIcon)
                         }
+                        SpaceSidebarToken::StateText => context
+                            .state_text
+                            .map(|text| ResolvedTokenKind::StateText(text.to_string())),
                         SpaceSidebarToken::Workspace => {
                             Some(ResolvedTokenKind::Workspace(context.workspace.to_string()))
                         }
@@ -296,7 +298,7 @@ mod tests {
                 SpaceTokenContext {
                     workspace: "feature",
                     branch: Some("worktree/feature"),
-                    state_text: "idle",
+                    state_text: Some("idle"),
                     ahead_behind: Some((2, 1)),
                     tokens: &std::collections::HashMap::new(),
                     suppress_git_details: true,
@@ -323,7 +325,7 @@ mod tests {
                 SpaceTokenContext {
                     workspace: "repo",
                     branch: None,
-                    state_text: "idle",
+                    state_text: Some("idle"),
                     ahead_behind: None,
                     tokens: &tokens,
                     suppress_git_details: false,
