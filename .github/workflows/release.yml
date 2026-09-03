@@ -203,7 +203,9 @@ jobs:
           (cd website && bun install --frozen-lockfile && bun run test && bun run build:draft)
 
   release:
-    needs: [build, flake-check, validate-release-inputs]
+    # This fork ships binaries, not the Nix package, and flake-check cannot
+    # fetch crates from crates.io (HTTP 403), so it must not gate a release.
+    needs: [build, validate-release-inputs]
     runs-on: ubuntu-latest
     permissions:
       contents: write
