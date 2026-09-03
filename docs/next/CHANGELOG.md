@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## [0.8.2-fork.3] - 2026-09-03
+
+### Added
+- With exactly two panes and no outer frame, the shared divider now accents the half beside the focused pane.
+
+### Fixed
+- Fixed a panic on builds whose version carries a prerelease suffix, which killed the server whenever a plugin manifest was loaded.
+
+### Removed
+- Reverted the 0.8.2-fork.1 and 0.8.2-fork.2 changes: confirmed session kill, the session name in the sidebar header, opening the primary checkout when entering a linked worktree, grouping spaces by repository, checkout names on grouped rows, and manual workspace folders.
+
 ## [0.8.2] - 2026-08-19
 
 ### Added
