@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Added
+- The Agent sidebar section can now be hidden with `ui.sidebar.agents.visible = false`, giving the full sidebar height to Spaces.
+
 ## [0.8.2-fork.4] - 2026-09-03
 
 ### Added
