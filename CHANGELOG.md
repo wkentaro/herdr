@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## [0.8.2-fork.4] - 2026-09-03
+
+### Added
+- The expanded Spaces sidebar now shows clickable tab rows for multi-tab workspaces, matching the Go to picker while keeping single-tab workspaces compact.
+
 ## [0.8.2-fork.3] - 2026-09-03
 
 ### Added
