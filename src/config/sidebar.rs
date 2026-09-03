@@ -372,6 +372,8 @@ where
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct AgentsSidebarConfig {
+    /// Show the Agents section in desktop sidebars. Default: true.
+    pub visible: bool,
     #[serde(deserialize_with = "deserialize_sidebar_rows")]
     pub rows: AgentSidebarRows,
     #[serde(default, deserialize_with = "deserialize_rows_by_agent")]
@@ -390,6 +392,7 @@ impl AgentsSidebarConfig {
 impl Default for AgentsSidebarConfig {
     fn default() -> Self {
         Self {
+            visible: true,
             rows: vec![
                 vec![
                     AgentSidebarToken::StateIcon,
@@ -438,6 +441,7 @@ mod tests {
     #[test]
     fn defaults_match_the_compact_agent_and_existing_space_layouts() {
         let config = SidebarConfig::default();
+        assert!(config.agents.visible);
         assert_eq!(
             config.agents.rows,
             vec![
@@ -466,6 +470,7 @@ mod tests {
         let config: crate::config::Config = toml::from_str(
             r#"
 [ui.sidebar.agents]
+visible = false
 rows = [["state_icon", "workspace"], ["state_text", "agent", "$summary"], ["terminal_title", "terminal_title_stripped", "$terminal_title"]]
 row_gap = 1
 
@@ -479,6 +484,7 @@ row_gap = 3
         )
         .expect("sidebar token config");
 
+        assert!(!config.ui.sidebar.agents.visible);
         assert_eq!(
             config.ui.sidebar.agents.rows[1],
             vec![

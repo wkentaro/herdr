@@ -810,6 +810,12 @@
           ]
         },
         {
+          "key": "ui.sidebar.agents.visible",
+          "type": "boolean",
+          "default": "true",
+          "description": "Show the Agent section in expanded and compact desktop sidebars. When false, Spaces use the available sidebar height."
+        },
+        {
           "key": "ui.sidebar.agents.row_gap",
           "type": "integer",
           "default": "0",

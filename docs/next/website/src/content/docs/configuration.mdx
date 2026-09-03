@@ -335,6 +335,7 @@ The expanded desktop sidebar renders each inner array in `rows` as one line. The
 
 ```toml
 [ui.sidebar.agents]
+visible = true
 row_gap = 0
 rows = [
   ["state_icon", "workspace", "tab"],
@@ -348,6 +349,8 @@ rows = [
   ["branch", "git_status"],
 ]
 ```
+
+Set `visible = false` under `[ui.sidebar.agents]` to hide the Agent section in expanded and compact desktop sidebars. The Spaces section then uses the full sidebar height.
 
 Agent rows accept these built-in tokens:
 
