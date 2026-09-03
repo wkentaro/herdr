@@ -700,7 +700,9 @@ pub(crate) fn compute_workspace_list_areas(
                     continue;
                 };
                 let workspace_height = count_workspace_label_rows(app, ws, *indented);
-                let row_height = workspace_row_height_in_body(app, ws, *indented, body.height);
+                let row_height = workspace_height
+                    .saturating_add(count_workspace_tab_rows(ws))
+                    .min(body.height);
                 let gap = workspace_entry_gap(app, &entries, entry_idx);
                 if row_y.saturating_add(row_height) > body_bottom {
                     break;
@@ -1453,13 +1455,15 @@ fn render_workspace_list(
                 } else {
                     Style::default().fg(p.overlay0)
                 };
-                frame.render_widget(
-                    Paragraph::new(Line::from(vec![
+                frame.buffer_mut().set_line(
+                    card.rect.x,
+                    tab_y,
+                    &Line::from(vec![
                         Span::styled(prefix, Style::default().fg(p.overlay0)),
                         Span::styled(connector, Style::default().fg(p.overlay0)),
                         Span::styled(label, label_style),
-                    ])),
-                    Rect::new(card.rect.x, tab_y, card.rect.width, 1),
+                    ]),
+                    card.rect.width,
                 );
             }
         }
