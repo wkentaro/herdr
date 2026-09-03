@@ -1076,7 +1076,7 @@ mod tests {
     }
 
     #[test]
-    fn expanded_sidebar_workspace_rows_show_state_before_name_without_numbers() {
+    fn expanded_sidebar_workspace_rows_leave_state_to_tab_rows() {
         let mut app = crate::app::state::AppState::test_new();
         let mut ws = Workspace::test_new("one");
         let repo = temp_git_repo("main");
@@ -1103,10 +1103,13 @@ mod tests {
         let card = app.view.workspace_card_areas[0].rect;
         let line1 = buffer_row_text(buffer, card, card.y);
         let line2 = buffer_row_text(buffer, card, card.y + 1);
+        let line3 = buffer_row_text(buffer, card, card.y + 2);
 
-        assert!(line1.starts_with(" · one"));
+        assert!(line1.contains("one"));
+        assert!(!line1.contains('·'));
         assert!(!line1.contains("1 one"));
         assert_eq!(line2, "   main");
+        assert!(line3.contains("└─ · 1"));
 
         std::fs::remove_dir_all(repo).ok();
     }
