@@ -14,6 +14,7 @@ env:
 
 jobs:
   flake-check:
+    if: github.repository == 'herdrdev/herdr'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -203,7 +204,7 @@ jobs:
           (cd website && bun install --frozen-lockfile && bun run test && bun run build:draft)
 
   release:
-    needs: [build, flake-check, validate-release-inputs]
+    needs: [build, validate-release-inputs]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -231,6 +232,7 @@ jobs:
           body_path: RELEASE_NOTES.md
 
   close-released-issues:
+    if: github.repository == 'herdrdev/herdr'
     needs: release
     runs-on: ubuntu-latest
     continue-on-error: true
@@ -367,6 +369,7 @@ jobs:
           done
 
   update-latest-json:
+    if: github.repository == 'herdrdev/herdr'
     needs: release
     runs-on: ubuntu-latest
     concurrency:
