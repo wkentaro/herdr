@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## [0.8.201] - 2026-09-10
+
+### Added
+- The expanded Spaces sidebar now shows clickable tab rows for every workspace, with per-tab agent status and attention indicators.
+
+### Changed
+- Update availability no longer adds attention badges to the global menu; the `update ready` action remains available.
+
 ## [0.8.2] - 2026-08-19
 
 ### Added
