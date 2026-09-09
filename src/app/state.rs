@@ -1603,12 +1603,11 @@ impl AppState {
     }
 
     pub(crate) fn global_menu_attention_badge_visible(&self) -> bool {
-        self.update_available.is_some() || self.integration_updates_available()
+        self.integration_updates_available()
     }
 
     pub(crate) fn global_menu_item_has_badge(&self, item: &str) -> bool {
-        (item == "update ready" && self.update_available.is_some())
-            || (item == "settings" && self.integration_updates_available())
+        item == "settings" && self.integration_updates_available()
     }
 
     pub(crate) fn settings_section_has_badge(&self, section: SettingsSection) -> bool {
