@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## [0.9.0-fork.1] - 2026-09-16
+
+Based on [upstream v0.9.0](https://github.com/herdrdev/herdr/releases/tag/v0.9.0).
+
+Upgrading from `0.8.201` requires a one-time manual installation from this release's assets; its updater still checks upstream and cannot parse fork suffixes. On Windows, extract the whole ZIP, including the app-local ConPTY runtime.
+
+### Changed
+
+- Rebased the fork onto upstream v0.9.0, retaining clickable workspace tab rows with individual agent statuses.
+- Update availability follows upstream configuration; set `version_check = false` under `[update]` to disable background version checks.
+- Fork versions use `-fork.N` again. Direct installs update from the fork's own releases with verified checksums; use the stable channel for fork updates.
+
+### Fixed
+
+- Fork version suffixes now parse and compare numerically, including `fork.2` before `fork.10`, without rejecting plugins compatible with the upstream base version.
+
 ## [0.9.0] - 2026-09-07
 
 ### Added
