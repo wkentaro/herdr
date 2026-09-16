@@ -2,6 +2,9 @@
 
 Terminal based agent runtime for coding agents.
 
+For releases or version-handling changes in `wkentaro/herdr`, read
+[the fork release policy](docs/fork-releases.md).
+
 ## Scope and Audience
 
 These instructions are layered.
