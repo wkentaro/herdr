@@ -92,7 +92,7 @@ pub(super) fn write_fake_tracked_repo(root: &Path) {
     .unwrap();
     std::fs::write(
         root.join(".git/config"),
-        "[branch \"main\"]\n\tremote = origin\n\tmerge = refs/heads/main\n",
+        "[remote \"origin\"]\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n[branch \"main\"]\n\tremote = origin\n\tmerge = refs/heads/main\n",
     )
     .unwrap();
 }

@@ -310,7 +310,7 @@ fn git_status_fingerprint_ignores_worktree_config_when_extension_disabled() {
     .unwrap();
     std::fs::write(
             root.join(".git/config"),
-            "[remote \"fork\"]\n\tfetch = +refs/heads/*:refs/remotes/fork/*\n[branch \"main\"]\n\tremote = origin\n\tmerge = refs/heads/main\n",
+            "[remote \"fork\"]\n\tfetch = +refs/heads/*:refs/remotes/fork/*\n[remote \"origin\"]\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n[branch \"main\"]\n\tremote = origin\n\tmerge = refs/heads/main\n",
         )
         .unwrap();
     std::fs::write(
@@ -400,7 +400,7 @@ fn git_status_fingerprint_ignores_included_worktree_config_extension() {
     .unwrap();
     std::fs::write(
             root.join(".git/config"),
-            "[include]\n\tpath = extension.cfg\n[remote \"fork\"]\n\tfetch = +refs/heads/*:refs/remotes/fork/*\n[branch \"main\"]\n\tremote = origin\n\tmerge = refs/heads/main\n",
+            "[include]\n\tpath = extension.cfg\n[remote \"fork\"]\n\tfetch = +refs/heads/*:refs/remotes/fork/*\n[remote \"origin\"]\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n[branch \"main\"]\n\tremote = origin\n\tmerge = refs/heads/main\n",
         )
         .unwrap();
     std::fs::write(
@@ -611,7 +611,7 @@ fn git_status_fingerprint_ignores_worktree_urls_for_hasconfig() {
     write_fake_tracked_repo(&root);
     std::fs::write(
             root.join(".git/config"),
-            "[extensions]\n\tworktreeConfig = true\n[branch \"main\"]\n\tremote = origin\n\tmerge = refs/heads/main\n",
+            "[extensions]\n\tworktreeConfig = true\n[remote \"origin\"]\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n[branch \"main\"]\n\tremote = origin\n\tmerge = refs/heads/main\n",
         )
         .unwrap();
     std::fs::write(
