@@ -1,6 +1,58 @@
 use super::*;
 
 #[test]
+fn sidebar_tabs_show_status_and_focus_background_workspace() {
+    let mut projected = snapshot();
+    projected.tabs[0].label = "notes".into();
+    let mut workspace = projected.workspaces[0].clone();
+    workspace.workspace_id = "ws_2".into();
+    workspace.focused = false;
+    workspace.active_tab_id = "tab_2".into();
+    projected.workspaces.push(workspace);
+    let mut tab = projected.tabs[0].clone();
+    tab.workspace_id = "ws_2".into();
+    tab.tab_id = "tab_2".into();
+    tab.label = "editor".into();
+    tab.focused = false;
+    projected.tabs.push(tab.clone());
+    tab.tab_id = "tab_3".into();
+    tab.label = "tests".into();
+    tab.agent_status = AgentStatus::Blocked;
+    projected.tabs.push(tab);
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(projected));
+    state.set_pane_surface(surface());
+    let frame = state.compose(106, 32).expect("sidebar with tabs");
+    let buffer = frame.to_ratatui_buffer().unwrap();
+    for (rect, _, tab_id) in &state.hits.sidebar_tabs {
+        let text = (rect.x..rect.right())
+            .map(|x| buffer[(x, rect.y)].symbol())
+            .collect::<String>();
+        match tab_id.as_str() {
+            "tab_1" => assert!(text.contains("└─ ○ notes"), "{text}"),
+            "tab_2" => assert!(text.contains("├─ ○ editor"), "{text}"),
+            "tab_3" => assert!(text.contains("└─ ● tests"), "{text}"),
+            _ => panic!("unexpected tab"),
+        }
+    }
+    assert_eq!(state.hits.sidebar_tabs.len(), 3);
+    let rect = state.hits.sidebar_tabs[2].0;
+    let outcome = state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: rect.x + 4,
+        row: rect.y,
+        modifiers: KeyModifiers::empty(),
+    })]);
+    assert!(
+        matches!(&outcome.actions[..], [ClientShellAction::Endpoint { request, .. }]
+        if matches!(&request.method, crate::api::schema::Method::TabFocus(target) if target.tab_id == "tab_3"))
+    );
+    assert!(state.workspace_press.is_none());
+    assert!(state.tab_press.is_none());
+    assert_eq!(state.hits.workspaces[1].card_bottom, rect.bottom());
+}
+
+#[test]
 fn mouse_hits_use_stable_workspace_tab_and_pane_ids() {
     let config = ClientShellConfig::from_config(&Config::default());
     let mut state = ClientShellState::new(config);
@@ -149,10 +201,7 @@ fn grouped_worktrees_render_parent_branch_and_indented_child() {
     let parent = state.hits.workspaces[0].rect;
     let status_cell = usize::from(parent.y) * usize::from(collapsed.width)
         + usize::from(parent.x.saturating_add(1));
-    assert_eq!(
-        collapsed.cells[status_cell].fg,
-        crate::protocol::color_to_u32(state.config.palette.red)
-    );
+    assert_ne!(collapsed.cells[status_cell].symbol, "●");
 
     let mut next = ClientShellInput::default();
     state.record_binding(

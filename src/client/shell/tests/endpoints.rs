@@ -53,6 +53,29 @@ fn state_with_remote() -> (ClientShellState, ClientEndpointId) {
 }
 
 #[test]
+fn sidebar_tab_click_activates_its_endpoint() {
+    let (mut state, remote) = state_with_remote();
+    state.compose(100, 32).unwrap();
+    let rect = state
+        .hits
+        .sidebar_tabs
+        .iter()
+        .find(|(_, endpoint, _)| endpoint == &remote)
+        .unwrap()
+        .0;
+    let outcome = state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: rect.x + 3,
+        row: rect.y,
+        modifiers: KeyModifiers::empty(),
+    })]);
+    assert!(
+        matches!(&outcome.actions[..], [ClientShellAction::ActivateEndpoint { endpoint_id, target: Some(ClientEndpointFocusTarget::Tab(tab_id)) }]
+        if endpoint_id == &remote && tab_id == "tab_1")
+    );
+}
+
+#[test]
 fn switching_machines_from_copy_mode_restores_terminal_input() {
     let (mut state, remote) = state_with_remote();
     let mut local_surface = surface();
@@ -1129,6 +1152,16 @@ fn workspace_drag_rejects_foreign_endpoint_slots() {
     state.handle_raw_events(vec![mouse(MouseEventKind::Down(MouseButton::Left), local)]);
     state.handle_raw_events(vec![mouse(MouseEventKind::Drag(MouseButton::Left), remote)]);
 
+    assert!(state.chrome_drag.is_none());
+    let tab = state
+        .hits
+        .sidebar_tabs
+        .iter()
+        .find(|(_, endpoint, _)| endpoint == &endpoint_id)
+        .unwrap()
+        .0;
+    state.handle_raw_events(vec![mouse(MouseEventKind::Down(MouseButton::Left), local)]);
+    state.handle_raw_events(vec![mouse(MouseEventKind::Drag(MouseButton::Left), tab)]);
     assert!(state.chrome_drag.is_none());
 }
 

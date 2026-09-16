@@ -213,6 +213,7 @@ fn disabled_mouse_chrome_keeps_tab_wheel_but_removes_split_drag_hits() {
     state.set_pane_surface(pane_surface);
     state.compose(106, 20).expect("mouse-disabled shell");
     assert!(state.hits.pane_splits.is_empty());
+    assert!(state.hits.sidebar_tabs.is_empty());
     let first_tab = state.hits.tabs[0].0;
     let wheel = state.handle_raw_events(vec![RawInputEvent::Mouse(crossterm::event::MouseEvent {
         kind: MouseEventKind::ScrollDown,

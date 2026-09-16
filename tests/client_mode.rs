@@ -990,7 +990,7 @@ fn federated_client_starts_without_local_and_survives_its_restart() {
     );
     let watermark = output_len(&output);
     // Select the fresh workspace below Local's restored workspace.
-    input.write_all(b"\x1b[<0;7;5M\x1b[<0;7;5m").unwrap();
+    input.write_all(b"\x1b[<0;7;6M\x1b[<0;7;6m").unwrap();
     assert!(
         wait_until(Duration::from_secs(10), Duration::from_millis(20), || {
             read_output(&output)[watermark..].contains("LOCAL_RECOVERED_SURFACE")

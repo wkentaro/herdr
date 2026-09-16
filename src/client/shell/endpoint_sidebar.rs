@@ -102,6 +102,7 @@ pub(super) fn render_collapsed(
             );
             hits.workspaces.push(WorkspaceHit {
                 rect,
+                card_bottom: rect.bottom(),
                 endpoint_id: endpoint.endpoint_id.clone(),
                 workspace_id: workspace.workspace_id.clone(),
                 indented: false,
@@ -186,6 +187,17 @@ pub(super) fn render_expanded(
         },
     }
     let mut rows = Vec::new();
+    let workspace_tabs = state
+        .endpoints
+        .iter()
+        .map(|endpoint| {
+            endpoint
+                .snapshot
+                .as_deref()
+                .map(super::sidebar::group_workspace_tabs)
+                .unwrap_or_default()
+        })
+        .collect::<Vec<_>>();
     for (endpoint_index, endpoint) in state.endpoints.iter().enumerate() {
         rows.push(Row::Endpoint(endpoint_index));
         if state.collapsed_endpoints.contains(&endpoint.endpoint_id) {
@@ -228,6 +240,11 @@ pub(super) fn render_expanded(
                     )
                     .len()
                     .max(1)
+                    .saturating_add(
+                        workspace_tabs[*endpoint]
+                            .get(workspace.workspace_id.as_str())
+                            .map_or(0, Vec::len),
+                    )
                     .min(u16::MAX as usize) as u16
                 })
                 .unwrap_or(1),
@@ -273,6 +290,7 @@ pub(super) fn render_expanded(
                 y = y.saturating_add(1);
             }
             Row::Workspace { endpoint, entry } => {
+                let tab_groups = &workspace_tabs[*endpoint];
                 let endpoint = &state.endpoints[*endpoint];
                 let Some(snapshot) = endpoint.snapshot.as_deref() else {
                     continue;
@@ -286,11 +304,17 @@ pub(super) fn render_expanded(
                     entry.indented,
                     &config.spaces,
                 );
-                let height = (tokens.len().max(1).min(u16::MAX as usize) as u16).min(body.height);
+                let tabs = tab_groups
+                    .get(workspace.workspace_id.as_str())
+                    .map_or(&[][..], Vec::as_slice);
+                let workspace_height = tokens.len().max(1).min(u16::MAX as usize) as u16;
+                let height = workspace_height
+                    .saturating_add(tabs.len().min(u16::MAX as usize) as u16)
+                    .min(body.height);
                 if y.saturating_add(height) > body.bottom() {
                     break;
                 }
-                let rect = Rect::new(body.x, y, content_width, height);
+                let rect = Rect::new(body.x, y, content_width, workspace_height.min(height));
                 let nested = Rect::new(
                     rect.x.saturating_add(2),
                     rect.y,
@@ -311,9 +335,24 @@ pub(super) fn render_expanded(
                     false,
                     palette,
                 );
+                super::sidebar::render_workspace_tabs(
+                    buffer,
+                    Rect::new(
+                        nested.x,
+                        nested.bottom(),
+                        nested.width,
+                        height.saturating_sub(nested.height),
+                    ),
+                    tabs,
+                    entry,
+                    &endpoint.endpoint_id,
+                    endpoint_active,
+                    config,
+                    hits,
+                );
                 if endpoint.status != ClientEndpointStatus::Online {
                     buffer.set_style(
-                        rect,
+                        Rect::new(rect.x, rect.y, rect.width, height),
                         Style::default()
                             .fg(palette.overlay0)
                             .add_modifier(Modifier::DIM),
@@ -321,6 +360,7 @@ pub(super) fn render_expanded(
                 }
                 hits.workspaces.push(WorkspaceHit {
                     rect,
+                    card_bottom: y.saturating_add(height),
                     endpoint_id: endpoint.endpoint_id.clone(),
                     workspace_id: workspace.workspace_id.clone(),
                     indented: entry.indented,

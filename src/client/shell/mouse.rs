@@ -467,7 +467,16 @@ impl ClientShellState {
             || point.1 < self.hits.workspace_body.y.saturating_sub(1)
             || point.1 >= self.hits.new_workspace.y
             || self.hits.workspaces.iter().any(|hit| {
-                hit.endpoint_id != self.active_endpoint_id && super::contains(hit.rect, point)
+                hit.endpoint_id != self.active_endpoint_id
+                    && super::contains(
+                        Rect::new(
+                            hit.rect.x,
+                            hit.rect.y,
+                            hit.rect.width,
+                            hit.card_bottom.saturating_sub(hit.rect.y),
+                        ),
+                        point,
+                    )
             })
         {
             return None;
@@ -501,7 +510,7 @@ impl ClientShellState {
                     .get(entry.index)
                     .map(|workspace| workspace.workspace_id.clone())
             });
-            let row = last_hit.rect.bottom();
+            let row = last_hit.card_bottom;
             if row < self.hits.new_workspace.y {
                 slots.push((before, row));
             }
@@ -1983,6 +1992,20 @@ impl ClientShellState {
                             return;
                         }
                     }
+                }
+                if let Some((_, endpoint_id, tab_id)) = self
+                    .hits
+                    .sidebar_tabs
+                    .iter()
+                    .find(|(rect, _, _)| super::contains(*rect, point))
+                    .cloned()
+                {
+                    self.focus_or_activate(
+                        endpoint_id,
+                        ClientEndpointFocusTarget::Tab(tab_id),
+                        outcome,
+                    );
+                    return;
                 }
                 let workspace_press = self
                     .hits

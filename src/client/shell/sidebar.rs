@@ -87,6 +87,7 @@ pub(crate) fn render_collapsed_sidebar(
         );
         hits.workspaces.push(WorkspaceHit {
             rect,
+            card_bottom: rect.bottom(),
             endpoint_id: ClientEndpointId::Local,
             workspace_id: workspace.workspace_id.clone(),
             indented: false,
@@ -211,6 +212,7 @@ pub(crate) fn render_sidebar(
     );
 
     let entries = workspace_entries(snapshot, state.collapsed_groups);
+    let workspace_tabs = group_workspace_tabs(snapshot);
     let body = Rect::new(
         workspace_area.x,
         workspace_area.y.saturating_add(WORKSPACE_HEADER_ROWS),
@@ -235,6 +237,11 @@ pub(crate) fn render_sidebar(
                     )
                     .len()
                     .max(1)
+                    .saturating_add(
+                        workspace_tabs
+                            .get(workspace.workspace_id.as_str())
+                            .map_or(0, Vec::len),
+                    )
                     .min(u16::MAX as usize) as u16
                 })
                 .unwrap_or(1)
@@ -289,11 +296,17 @@ pub(crate) fn render_sidebar(
         };
         let status = displayed_workspace_status(snapshot, workspace, state.collapsed_groups);
         let rows = workspace_rows(workspace, status, entry.indented, &config.spaces);
-        let row_height = (rows.len().max(1).min(u16::MAX as usize) as u16).min(body.height);
+        let tabs = workspace_tabs
+            .get(workspace.workspace_id.as_str())
+            .map_or(&[][..], Vec::as_slice);
+        let workspace_height = rows.len().max(1).min(u16::MAX as usize) as u16;
+        let row_height = workspace_height
+            .saturating_add(tabs.len().min(u16::MAX as usize) as u16)
+            .min(body.height);
         if y.saturating_add(row_height) > body.bottom() {
             break;
         }
-        let rect = Rect::new(body.x, y, content_width, row_height);
+        let rect = Rect::new(body.x, y, content_width, workspace_height.min(row_height));
         let selected = state.selected_workspace_id == Some(workspace.workspace_id.as_str());
         let dragged = state.dragged_workspace_id == Some(workspace.workspace_id.as_str());
         if selected {
@@ -316,6 +329,21 @@ pub(crate) fn render_sidebar(
             dragged,
             palette,
         );
+        render_workspace_tabs(
+            buffer,
+            Rect::new(
+                body.x,
+                rect.bottom(),
+                content_width,
+                row_height.saturating_sub(rect.height),
+            ),
+            tabs,
+            entry,
+            &ClientEndpointId::Local,
+            true,
+            config,
+            hits,
+        );
         let group_toggle = parent_group_key(snapshot, entry.index).map(|key| {
             let rect = Rect::new(rect.right().saturating_sub(1), rect.y, 1, 1);
             put_text(
@@ -334,6 +362,7 @@ pub(crate) fn render_sidebar(
         });
         hits.workspaces.push(WorkspaceHit {
             rect,
+            card_bottom: y.saturating_add(row_height),
             endpoint_id: ClientEndpointId::Local,
             workspace_id: workspace.workspace_id.clone(),
             indented: entry.indented,
@@ -599,7 +628,7 @@ pub(in crate::client::shell) fn workspace_rows(
         &workspace.label
     };
     let token_values = workspace.tokens.iter().cloned().collect::<HashMap<_, _>>();
-    crate::ui::sidebar_space_rows(
+    let mut rows = crate::ui::sidebar_space_rows(
         config,
         crate::ui::SpaceTokenContext {
             workspace: label,
@@ -609,7 +638,103 @@ pub(in crate::client::shell) fn workspace_rows(
             tokens: &token_values,
             suppress_git_details: indented,
         },
-    )
+    );
+    for row in &mut rows {
+        row.retain(|token| {
+            !matches!(
+                token.kind,
+                crate::ui::ResolvedTokenKind::StateIcon
+                    | crate::ui::ResolvedTokenKind::StateText(_)
+            )
+        });
+    }
+    rows.retain(|row| !row.is_empty());
+    rows
+}
+
+pub(in crate::client::shell) fn group_workspace_tabs(
+    snapshot: &ClientShellSnapshot,
+) -> HashMap<&str, Vec<&ClientShellTab>> {
+    let mut tabs = HashMap::<&str, Vec<&ClientShellTab>>::new();
+    for tab in &snapshot.tabs {
+        tabs.entry(&tab.workspace_id).or_default().push(tab);
+    }
+    tabs
+}
+
+pub(in crate::client::shell) fn render_workspace_tabs(
+    buffer: &mut Buffer,
+    area: Rect,
+    tabs: &[&ClientShellTab],
+    entry: &WorkspaceEntry,
+    endpoint_id: &ClientEndpointId,
+    endpoint_active: bool,
+    config: &ClientShellConfig,
+    hits: &mut ShellHitMap,
+) {
+    let palette = &config.palette;
+    for (index, tab) in tabs.iter().take(area.height as usize).enumerate() {
+        let rect = Rect::new(area.x, area.y + index as u16, area.width, 1);
+        let active = endpoint_active && tab.focused;
+        if active {
+            buffer.set_style(rect, Style::default().bg(palette.active_row_bg));
+        }
+        let prefix = if entry.indented {
+            if entry.last_child {
+                "      "
+            } else {
+                "   │  "
+            }
+        } else {
+            "   "
+        };
+        let connector = if index + 1 == tabs.len() {
+            "└─ "
+        } else {
+            "├─ "
+        };
+        let mut x = put_segment(
+            buffer,
+            rect.x,
+            rect.y,
+            rect.right(),
+            prefix,
+            Style::default().fg(palette.overlay0),
+        );
+        x = put_segment(
+            buffer,
+            x,
+            rect.y,
+            rect.right(),
+            connector,
+            Style::default().fg(palette.overlay0),
+        );
+        x = put_segment(
+            buffer,
+            x,
+            rect.y,
+            rect.right(),
+            status_icon(tab.agent_status, config.status_indicators),
+            Style::default().fg(status_color(tab.agent_status, palette)),
+        );
+        x = x.saturating_add(1);
+        put_text(
+            buffer,
+            x,
+            rect.y,
+            rect.right().saturating_sub(x),
+            &tab.label,
+            if active {
+                Style::default()
+                    .fg(palette.text)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(palette.overlay0)
+            },
+        );
+        hits.sidebar_tabs
+            .push((rect, endpoint_id.clone(), tab.tab_id.clone()));
+    }
 }
 
 pub(in crate::client::shell) fn render_workspace_rows(
