@@ -245,7 +245,11 @@ fn validate_min_herdr_version(value: Option<&str>) -> Result<String, (&'static s
             ),
         )
     })?;
-    let current = crate::update::Version::current();
+    let mut current = crate::update::Version::current();
+    // Fork builds retain the upstream API despite their prerelease ordering.
+    if required.fork_revision.is_none() {
+        current.fork_revision = None;
+    }
     if required > current {
         return Err((
             "plugin_requires_newer_herdr",
@@ -605,4 +609,17 @@ fn normalize_local_identifier(value: &str, max_chars: usize) -> Option<String> {
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b':' | b'_' | b'-')))
     .then(|| value.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn fork_build_accepts_its_upstream_plugin_api() {
+        let version = crate::build_info::BASE_VERSION.split('-').next().unwrap();
+        assert_eq!(
+            super::validate_min_herdr_version(Some(version)).unwrap(),
+            version
+        );
+        assert!(super::validate_min_herdr_version(Some("999.0.0")).is_err());
+    }
 }

@@ -59,15 +59,13 @@ def normalize_version(version: str) -> str:
     return version.strip().removeprefix("v")
 
 
-def parse_version(version: str) -> tuple[int, int, int]:
+def parse_version(version: str) -> tuple[int, int, int, bool, int]:
     normalized = normalize_version(version)
-    parts = normalized.split(".")
-    if len(parts) != 3:
+    match = re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-fork\.([1-9][0-9]*))?", normalized)
+    if match is None:
         raise ChangelogError(f"invalid version: {version}")
-    try:
-        return tuple(int(part) for part in parts)  # type: ignore[return-value]
-    except ValueError as exc:
-        raise ChangelogError(f"invalid version: {version}") from exc
+    major, minor, patch, revision = match.groups()
+    return int(major), int(minor), int(patch), revision is None, int(revision or 0)
 
 
 def parse_sections(text: str) -> list[Section]:

@@ -1,6 +1,6 @@
 //! Self-update mechanism.
 //!
-//! Checks the hosted herdr.dev update manifest for newer versions.
+//! Checks the fork's release manifest for newer versions.
 //! Manual `herdr update` downloads and installs the binary.
 //! Background checks only surface availability and release notes.
 //! Uses `curl` as a subprocess for HTTP — no additional Rust HTTP dependencies.
@@ -22,7 +22,8 @@ use std::time::{Duration, Instant};
 use interprocess::local_socket::traits::Stream as _;
 use serde::{Deserialize, Deserializer};
 
-const STABLE_UPDATE_MANIFEST_URL: &str = "https://herdr.dev/latest.json";
+const STABLE_UPDATE_MANIFEST_URL: &str =
+    "https://github.com/wkentaro/herdr/releases/latest/download/latest.json";
 const PREVIEW_UPDATE_MANIFEST_URL: &str = "https://herdr.dev/preview.json";
 const HOMEBREW_FORMULA_API_URL: &str = "https://formulae.brew.sh/api/formula/herdr.json";
 const HERDR_UPDATE_COMMAND: &str = "herdr update";
@@ -62,16 +63,26 @@ fn fake_release_notes_body(version: &str) -> String {
 // ---------------------------------------------------------------------------
 
 /// Parsed semver version for comparison.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Version {
     pub major: u32,
     pub minor: u32,
     pub patch: u32,
+    pub fork_revision: Option<u32>,
 }
 
 impl Version {
     pub fn parse(s: &str) -> Option<Self> {
         let s = s.strip_prefix('v').unwrap_or(s);
+        let (s, fork_revision) = match s.split_once("-fork.") {
+            Some((base, revision)) => {
+                if revision.starts_with('0') || !revision.bytes().all(|b| b.is_ascii_digit()) {
+                    return None;
+                }
+                (base, Some(revision.parse().ok()?))
+            }
+            None => (s, None),
+        };
         let parts: Vec<&str> = s.split('.').collect();
         if parts.len() != 3 {
             return None;
@@ -80,6 +91,7 @@ impl Version {
             major: parts[0].parse().ok()?,
             minor: parts[1].parse().ok()?,
             patch: parts[2].parse().ok()?,
+            fork_revision,
         })
     }
 
@@ -88,9 +100,38 @@ impl Version {
     }
 }
 
+impl Ord for Version {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        (
+            self.major,
+            self.minor,
+            self.patch,
+            self.fork_revision.is_none(),
+            self.fork_revision,
+        )
+            .cmp(&(
+                other.major,
+                other.minor,
+                other.patch,
+                other.fork_revision.is_none(),
+                other.fork_revision,
+            ))
+    }
+}
+
+impl PartialOrd for Version {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 impl std::fmt::Display for Version {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}.{}.{}", self.major, self.minor, self.patch)
+        write!(f, "{}.{}.{}", self.major, self.minor, self.patch)?;
+        if let Some(revision) = self.fork_revision {
+            write!(f, "-fork.{revision}")?;
+        }
+        Ok(())
     }
 }
 
@@ -330,6 +371,11 @@ fn fetch_update_manifest() -> Result<UpdateManifest, String> {
 }
 
 fn fetch_preview_manifest() -> Result<PreviewManifest, String> {
+    if Version::current().fork_revision.is_some() {
+        return Err(
+            "this fork publishes on the stable channel; run `herdr channel set stable`".into(),
+        );
+    }
     fetch_json_manifest(PREVIEW_UPDATE_MANIFEST_URL)
 }
 
@@ -2506,7 +2552,8 @@ mod tests {
             Some(Version {
                 major: 1,
                 minor: 2,
-                patch: 3
+                patch: 3,
+                fork_revision: None,
             })
         );
     }
@@ -2518,7 +2565,8 @@ mod tests {
             Some(Version {
                 major: 0,
                 minor: 1,
-                patch: 0
+                patch: 0,
+                fork_revision: None,
             })
         );
     }
@@ -3396,6 +3444,7 @@ mod tests {
             major: 0,
             minor: 1,
             patch: 0,
+            fork_revision: None,
         };
         assert_eq!(v.to_string(), "0.1.0");
     }
@@ -3404,6 +3453,34 @@ mod tests {
     fn current_version_parses() {
         let v = Version::current();
         assert!(v.major < 100);
+    }
+
+    #[test]
+    fn fork_versions_preserve_identity_and_order() {
+        let ordered = [
+            "0.8.201",
+            "0.9.0-fork.1",
+            "0.9.0-fork.2",
+            "0.9.0-fork.10",
+            "0.9.0",
+            "0.9.1-fork.1",
+        ];
+        let versions = ordered.map(|value| Version::parse(value).unwrap());
+        assert!(versions.windows(2).all(|pair| pair[0] < pair[1]));
+        for (value, parsed) in ordered.iter().zip(versions) {
+            assert_eq!(parsed.to_string(), *value);
+            assert_eq!(Version::parse(&format!("v{value}")), Some(parsed));
+        }
+        for invalid in [
+            "0.9.0-fork.0",
+            "0.9.0-fork.01",
+            "0.9.0-fork.",
+            "0.9.0-fork.-1",
+            "0.9.0-fork.1.2",
+            "0.9.0-fork.4294967296",
+        ] {
+            assert_eq!(Version::parse(invalid), None, "{invalid}");
+        }
     }
 
     #[test]

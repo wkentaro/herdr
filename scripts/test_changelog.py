@@ -19,6 +19,7 @@ from scripts.changelog import (
     infer_protocol_from_notes,
     load_product_announcement,
     manifest_from_release_payload,
+    parse_version,
     prepare_release,
     read_endpoint_protocol_generation,
     read_protocol_version,
@@ -101,6 +102,19 @@ class ChangelogScriptTests(unittest.TestCase):
 
         self.assertEqual(manifest["protocol"], read_protocol_version())
         self.assertEqual(manifest["notes"], "### Fixed\n- One")
+
+    def test_fork_manifest_preserves_versions_and_numeric_revision_order(self) -> None:
+        versions = ["0.8.201", "0.9.0-fork.1", "0.9.0-fork.2", "0.9.0-fork.10", "0.9.0"]
+        self.assertEqual(sorted(reversed(versions), key=parse_version), versions)
+        for invalid in ["0.9.0-fork.0", "0.9.0-fork.01", "0.9.0-fork."]:
+            with self.assertRaises(ChangelogError):
+                parse_version(invalid)
+        version = "0.9.0-fork.1"
+        assets = {target: url.replace("herdrdev/herdr", "wkentaro/herdr") for target, url in release_assets(version).items()}
+        manifest = json.loads(build_latest_json(version, "Fork release", assets, release_sha256()))
+        self.assertEqual(manifest["version"], version)
+        self.assertEqual(manifest["releases"][version]["assets"], assets)
+        self.assertEqual(manifest["sha256"], release_sha256())
 
     def test_build_latest_json_embeds_notes_and_release_assets(self) -> None:
         manifest = json.loads(

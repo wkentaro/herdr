@@ -37,7 +37,7 @@ jobs:
           nix flake check --all-systems --no-build --print-build-logs
 
   build:
-    if: github.repository == 'herdrdev/herdr'
+    if: github.repository == 'herdrdev/herdr' || github.repository == 'wkentaro/herdr'
     permissions:
       contents: read
     strategy:
@@ -183,7 +183,7 @@ jobs:
           path: ${{ matrix.name }}
 
   validate-release-inputs:
-    if: github.repository == 'herdrdev/herdr'
+    if: github.repository == 'herdrdev/herdr' || github.repository == 'wkentaro/herdr'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -193,6 +193,10 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Fetch upstream documentation tags
+        if: github.repository == 'wkentaro/herdr'
+        run: git fetch --no-tags https://github.com/herdrdev/herdr.git 'refs/tags/*:refs/tags/*'
 
       - name: Install Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
@@ -211,8 +215,8 @@ jobs:
           test -f docs/next/README.zh-CN.md
 
   release:
-    needs: [build, flake-check, validate-release-inputs]
-    if: github.repository == 'herdrdev/herdr'
+    needs: [build, validate-release-inputs]
+    if: github.repository == 'herdrdev/herdr' || github.repository == 'wkentaro/herdr'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -228,6 +232,28 @@ jobs:
       - name: Extract release notes from changelog
         run: python3 scripts/changelog.py extract --version "${GITHUB_REF_NAME#v}" --output RELEASE_NOTES.md
 
+      - name: Generate fork update manifest
+        if: github.repository == 'wkentaro/herdr'
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+          from scripts.changelog import EXPECTED_ASSET_NAMES, build_latest_json
+
+          version = os.environ["GITHUB_REF_NAME"].removeprefix("v")
+          repo = os.environ["GITHUB_REPOSITORY"]
+          assets, checksums = {}, {}
+          for target, name in EXPECTED_ASSET_NAMES.items():
+              artifact = Path(name) / name
+              with artifact.open("rb") as stream:
+                  checksums[target] = hashlib.file_digest(stream, "sha256").hexdigest()
+              assets[target] = f"https://github.com/{repo}/releases/download/v{version}/{name}"
+          Path("latest.json").write_text(build_latest_json(
+              version, Path("RELEASE_NOTES.md").read_text(), assets, checksums,
+          ))
+          PY
+
       - name: Create release
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3
         with:
@@ -237,7 +263,10 @@ jobs:
             herdr-macos-x86_64/herdr-macos-x86_64
             herdr-macos-aarch64/herdr-macos-aarch64
             herdr-windows-x86_64.zip/herdr-windows-x86_64.zip
+            latest.json
           body_path: RELEASE_NOTES.md
+          prerelease: false
+          make_latest: "true"
 
   close-released-issues:
     needs: release
