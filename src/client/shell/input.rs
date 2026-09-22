@@ -621,6 +621,14 @@ impl ClientShellState {
     ) {
         use crate::input::{KeybindAction, KeybindDispatch, KeybindMatch};
 
+        if crate::config::terminal_key_matches_combo(key, (KeyCode::F(10), KeyModifiers::SHIFT)) {
+            if let Some(workspace_id) = self.workspace_action_id() {
+                self.open_workspace_context_menu(workspace_id, 1, 2);
+                outcome.repaint = true;
+            }
+            return;
+        }
+
         if key.code == KeyCode::Esc
             || crate::config::terminal_key_matches_combo(key, self.config.keybinds.prefix)
         {
@@ -854,6 +862,7 @@ impl ClientShellState {
                 super::aggregate_navigation::online_agent_targets(
                     &self.endpoints,
                     self.config.agent_panel_sort,
+                    &self.hidden_workspaces,
                 )
                 .get(*index)
                 .is_some()
@@ -974,6 +983,9 @@ impl ClientShellState {
     }
 
     pub(super) fn focused_pane_id(&self) -> Option<String> {
+        if self.is_focused_workspace_hidden() {
+            return None;
+        }
         self.snapshot
             .as_deref()
             .and_then(|snapshot| snapshot.focused_pane_id.clone())
@@ -1012,6 +1024,9 @@ impl ClientShellState {
     }
 
     fn popup_input_target(&self) -> Option<ClientInputTarget> {
+        if self.is_focused_workspace_hidden() {
+            return None;
+        }
         self.popup_terminal_id
             .as_ref()
             .map(|terminal_id| ClientInputTarget::Popup(terminal_id.clone()))

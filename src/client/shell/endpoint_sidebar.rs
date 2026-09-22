@@ -55,7 +55,12 @@ pub(super) fn render_collapsed(
         let Some(snapshot) = endpoint.snapshot.as_deref() else {
             continue;
         };
-        for workspace in &snapshot.workspaces {
+        let hidden = get_hidden_workspace_ids(state.hidden_workspaces, &endpoint.endpoint_id);
+        for workspace in snapshot
+            .workspaces
+            .iter()
+            .filter(|workspace| !hidden.contains(&workspace.workspace_id))
+        {
             if y >= workspace_area.bottom() {
                 break;
             }
@@ -127,6 +132,7 @@ pub(super) fn render_collapsed(
         state.endpoints,
         state.active_endpoint_id,
         config,
+        state.hidden_workspaces,
         hits,
     );
     hits.sidebar_toggle = if area.is_empty() || workspace_area.width == 0 {
@@ -179,8 +185,9 @@ pub(super) fn render_expanded(
             .add_modifier(Modifier::BOLD),
     );
 
-    enum Row {
+    enum Row<'a> {
         Endpoint(usize),
+        Hidden(super::workspace_visibility::HiddenWorkspaceRow<'a>),
         Workspace {
             endpoint: usize,
             entry: WorkspaceEntry,
@@ -205,15 +212,28 @@ pub(super) fn render_expanded(
         }
         if let Some(snapshot) = endpoint.snapshot.as_deref() {
             rows.extend(
-                super::sidebar::workspace_entries(snapshot, &HashSet::new())
-                    .into_iter()
-                    .map(|entry| Row::Workspace {
-                        endpoint: endpoint_index,
-                        entry,
-                    }),
+                super::sidebar::workspace_entries(
+                    snapshot,
+                    &HashSet::new(),
+                    get_hidden_workspace_ids(state.hidden_workspaces, &endpoint.endpoint_id),
+                )
+                .into_iter()
+                .map(|entry| Row::Workspace {
+                    endpoint: endpoint_index,
+                    entry,
+                }),
             );
         }
     }
+    rows.extend(
+        super::workspace_visibility::collect_hidden_workspace_rows(
+            state.endpoints,
+            state.hidden_workspaces,
+            state.hidden_workspaces_expanded,
+        )
+        .into_iter()
+        .map(Row::Hidden),
+    );
     let body = Rect::new(
         workspace_area.x,
         workspace_area.y.saturating_add(WORKSPACE_HEADER_ROWS),
@@ -226,7 +246,7 @@ pub(super) fn render_expanded(
     let row_heights = rows
         .iter()
         .map(|row| match row {
-            Row::Endpoint(_) => 1,
+            Row::Endpoint(_) | Row::Hidden(_) => 1,
             Row::Workspace { endpoint, entry } => state.endpoints[*endpoint]
                 .snapshot
                 .as_deref()
@@ -267,6 +287,20 @@ pub(super) fn render_expanded(
     let mut y = body.y;
     for row in rows.iter().skip(*state.workspace_scroll) {
         match row {
+            Row::Hidden(row) => {
+                if y >= body.bottom() {
+                    break;
+                }
+                super::workspace_visibility::render_hidden_workspace_row(
+                    buffer,
+                    Rect::new(body.x, y, content_width, 1),
+                    row,
+                    state.hidden_workspaces_expanded,
+                    palette,
+                    hits,
+                );
+                y += 1;
+            }
             Row::Endpoint(index) => {
                 if y >= body.bottom() {
                     break;
@@ -420,6 +454,7 @@ pub(super) fn render_expanded(
         state.endpoints,
         state.active_endpoint_id,
         config,
+        state.hidden_workspaces,
         state.agent_scroll,
         hits,
     );

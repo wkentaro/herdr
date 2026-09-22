@@ -53,6 +53,100 @@ fn state_with_remote() -> (ClientShellState, ClientEndpointId) {
 }
 
 #[test]
+fn startup_waits_for_visible_remote_without_restoring_hidden_local_workspace() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    let profile = remote_profile();
+    let remote = ClientEndpointId::Ssh(profile.id.clone());
+    state.set_endpoint_catalog(&[profile]);
+    state
+        .hidden_workspaces
+        .insert("local".into(), HashSet::from(["ws_1".into()]));
+    state.set_snapshot(Box::new(snapshot()));
+    let mut outcome = ClientShellInput::default();
+    state.redirect_hidden_workspace_focus(&mut outcome);
+    assert!(outcome.actions.is_empty());
+    assert!(state.hidden_workspaces["local"].contains("ws_1"));
+    state.set_endpoint_status(&remote, ClientEndpointStatus::Online);
+    let mut projected = snapshot();
+    projected.boot_id = "remote-boot".into();
+    state.set_endpoint_snapshot(&remote, Box::new(projected));
+    state.redirect_hidden_workspace_focus(&mut outcome);
+    state.redirect_hidden_workspace_focus(&mut outcome);
+    assert!(
+        matches!(&outcome.actions[..], [ClientShellAction::ActivateEndpoint { endpoint_id, .. }] if endpoint_id == &remote)
+    );
+    assert!(state.activate_endpoint_projection(&remote));
+    assert!(state.hidden_workspaces["local"].contains("ws_1"));
+}
+
+#[test]
+fn hidden_tree_keeps_identical_ids_on_other_machines_visible() {
+    let (mut state, remote) = state_with_remote();
+    state
+        .hidden_workspaces
+        .insert(remote.storage_key(), HashSet::from(["ws_1".into()]));
+    state.hidden_workspaces_expanded = true;
+    let frame = state.compose(106, 32).unwrap();
+    assert_eq!(state.hits.workspaces.len(), 1);
+    assert_eq!(
+        state.hits.workspaces[0].endpoint_id,
+        ClientEndpointId::Local
+    );
+    assert_eq!(state.hits.hidden_workspaces.len(), 1);
+    assert_eq!(state.hits.hidden_workspaces[0].1, remote);
+    let text = frame
+        .cells
+        .iter()
+        .map(|cell| cell.symbol.as_str())
+        .collect::<String>();
+    assert!(text.contains("Hidden (1)"));
+    assert!(text.contains("Build"));
+    let mut next = ClientShellInput::default();
+    state.handle_endpoint_navigation(crate::input::KeybindAction::NextWorkspace, &mut next);
+    assert!(
+        matches!(&next.actions[..], [ClientShellAction::Endpoint { request, .. }]
+        if matches!(&request.method, crate::api::schema::Method::WorkspaceFocus(target) if target.workspace_id == "ws_1"))
+    );
+
+    state.set_endpoint_status(&remote, ClientEndpointStatus::Reconnecting);
+    let mut restore = ClientShellInput::default();
+    assert!(!state.focus_or_activate(
+        remote.clone(),
+        ClientEndpointFocusTarget::Workspace("ws_1".into()),
+        &mut restore
+    ));
+    assert!(restore.actions.is_empty());
+    assert!(state.hidden_workspaces[&remote.storage_key()].contains("ws_1"));
+    state.set_endpoint_status(&remote, ClientEndpointStatus::Online);
+    state.focus_or_activate(
+        remote.clone(),
+        ClientEndpointFocusTarget::Workspace("ws_1".into()),
+        &mut restore,
+    );
+    assert!(state.hidden_workspaces[&remote.storage_key()].is_empty());
+    assert!(
+        matches!(&restore.actions[..], [ClientShellAction::ActivateEndpoint { endpoint_id, .. }] if endpoint_id == &remote)
+    );
+}
+
+#[test]
+fn hiding_last_local_workspace_waits_until_another_machine_is_active() {
+    let (mut state, remote) = state_with_remote();
+    let mut outcome = ClientShellInput::default();
+    state.hide_workspace("ws_1".into(), &mut outcome);
+    assert!(state.hidden_workspaces.is_empty());
+    assert!(
+        matches!(&outcome.actions[..], [ClientShellAction::ActivateEndpoint { endpoint_id, .. }] if endpoint_id == &remote)
+    );
+    assert!(state.activate_endpoint_projection(&remote));
+    assert!(state.hidden_workspaces["local"].contains("ws_1"));
+    let mut last = ClientShellInput::default();
+    state.hide_workspace("ws_1".into(), &mut last);
+    assert!(last.actions.is_empty());
+    assert!(!get_hidden_workspace_ids(&state.hidden_workspaces, &remote).contains("ws_1"));
+}
+
+#[test]
 fn sidebar_tab_click_activates_its_endpoint() {
     let (mut state, remote) = state_with_remote();
     state.compose(100, 32).unwrap();

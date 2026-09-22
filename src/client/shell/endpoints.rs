@@ -364,6 +364,7 @@ impl ClientShellState {
         {
             return;
         }
+        self.prune_hidden_workspaces(endpoint_id, &snapshot);
         let boot_changed = self.endpoints[index]
             .snapshot
             .as_deref()

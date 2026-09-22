@@ -62,11 +62,19 @@ fn manual_client_chrome_preferences_round_trip_per_endpoint() {
     state.sidebar_collapsed_manual = true;
     state.collapsed_groups.insert("repo-two".into());
     state.collapsed_groups.insert("repo-one".into());
+    state
+        .hidden_workspaces
+        .insert("local".into(), HashSet::from(["ws_2".into()]));
+    state
+        .hidden_workspaces
+        .insert("ssh:machine".into(), HashSet::from(["ws_1".into()]));
     state.persist_chrome_preferences(&mut ClientShellInput::default());
 
     let reloaded_config =
         ClientShellConfig::from_config(&Config::default()).with_preferences_path(path.clone());
     let reloaded = ClientShellState::new(reloaded_config);
+    assert_eq!(reloaded.hidden_workspaces, state.hidden_workspaces);
+    assert!(!reloaded.hidden_workspaces_expanded);
     assert_eq!(reloaded.sidebar_width, 31);
     assert!(reloaded.sidebar_width_manual);
     assert_eq!(reloaded.sidebar_section_split, 0.7);

@@ -11,6 +11,10 @@ A workspace is the top-level project container. Use one workspace per repo, task
 
 A workspace owns tabs and panes. Its sidebar state rolls up from the agents inside it, so you can see which project needs attention.
 
+Right-click a workspace and choose **Hide** to move it into the collapsed **Hidden** tree at the bottom of the sidebar. Its terminals and agents keep running, but it and its agents no longer appear in normal navigation. Expand Hidden and click a workspace to restore and focus it; each entry includes its machine label.
+
+Hiding the active workspace switches to another visible workspace. The last visible workspace cannot be hidden. Linked worktrees are hidden individually. Hidden choices are saved on this client across restarts. Notifications remain enabled, and clicking one restores its workspace. Keyboard users can open a workspace's menu with `shift+F10` in workspace navigation and restore hidden workspaces through the navigator.
+
 ## Tab
 
 A tab is a layout inside a workspace. Use tabs to separate views like `agents`, `logs`, `server`, or `review`.

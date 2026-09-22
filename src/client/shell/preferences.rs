@@ -19,6 +19,8 @@ pub(super) struct ClientChromePreferences {
     pub(super) agent_panel_sort: Option<crate::config::AgentPanelSortConfig>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(super) collapsed_groups: Vec<String>,
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub(super) hidden_workspaces: super::HiddenWorkspaces,
 }
 
 pub(super) fn path_for_local_endpoint(socket_path: &Path) -> PathBuf {

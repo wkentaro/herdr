@@ -45,6 +45,8 @@ impl ClientShellState {
                 active_endpoint_id: &self.active_endpoint_id,
                 collapsed_endpoints: &self.collapsed_endpoints,
                 collapsed_groups: &self.collapsed_groups,
+                hidden_workspaces: &self.hidden_workspaces,
+                hidden_workspaces_expanded: self.hidden_workspaces_expanded,
                 workspace_scroll: &mut self.workspace_scroll,
                 agent_scroll: &mut self.agent_scroll,
                 tab_scroll: &mut self.tab_scroll,
@@ -103,6 +105,7 @@ impl ClientShellState {
         if self.snapshot.is_none() || self.pane_surface.is_none() {
             return Some(self.compose_unavailable(cols, rows));
         }
+        let hidden_focus = self.is_focused_workspace_hidden();
         let snapshot = self.snapshot.as_deref()?;
         // A one-step successor is retained separately until its exact snapshot arrives; do not
         // keep composing the now-superseded current pair while it is pending.
@@ -143,6 +146,8 @@ impl ClientShellState {
                 active_endpoint_id: &self.active_endpoint_id,
                 collapsed_endpoints: &self.collapsed_endpoints,
                 collapsed_groups: &self.collapsed_groups,
+                hidden_workspaces: &self.hidden_workspaces,
+                hidden_workspaces_expanded: self.hidden_workspaces_expanded,
                 workspace_scroll: &mut self.workspace_scroll,
                 agent_scroll: &mut self.agent_scroll,
                 tab_scroll: &mut self.tab_scroll,
@@ -261,12 +266,37 @@ impl ClientShellState {
             self.hits.tab_scroll_left = Rect::default();
             self.hits.tab_scroll_right = Rect::default();
         }
+        if hidden_focus {
+            for area in [layout.pane_surface, layout.tab_bar] {
+                for y in area.y..area.bottom() {
+                    for x in area.x..area.right() {
+                        buffer[(x, y)].reset();
+                    }
+                }
+            }
+            render::put_text(
+                &mut buffer,
+                layout.pane_surface.x,
+                layout.pane_surface.y,
+                layout.pane_surface.width,
+                "Choose a visible workspace or restore one from Hidden.",
+                Style::default().fg(self.config.palette.overlay0),
+            );
+            self.hits.panes.clear();
+            self.hits.pane_splits.clear();
+            self.hits.tabs.clear();
+            self.hits.new_tab = Rect::default();
+            self.hits.tab_scroll_left = Rect::default();
+            self.hits.tab_scroll_right = Rect::default();
+        }
         let mut frame = FrameData::from_ratatui_buffer_with_hyperlinks(&buffer, None, &[]);
         let mode_bar_cells = mode_bar.map(|bar| {
             let start = usize::from(bar.y) * usize::from(frame.width) + usize::from(bar.x);
             frame.cells[start..start + usize::from(bar.width)].to_vec()
         });
-        blit_pane_surface(&mut frame, &surface.frame, layout.pane_surface);
+        if !hidden_focus {
+            blit_pane_surface(&mut frame, &surface.frame, layout.pane_surface);
+        }
         restore_mode_bar(&mut frame, mode_bar, mode_bar_cells.as_deref());
         let has_selection = self
             .selection
@@ -463,7 +493,7 @@ impl ClientShellState {
             frame.replace_from_ratatui_buffer_preserving_effects(&composed, cursor);
         }
         self.hits.popup = None;
-        if let Some(popup) = surface.popup.as_deref() {
+        if let Some(popup) = surface.popup.as_deref().filter(|_| !hidden_focus) {
             let width = popup.width.map(client_popup_size);
             let height = popup.height.map(client_popup_size);
             if let Some(geometry) =
@@ -508,6 +538,7 @@ impl ClientShellState {
                 snapshot,
                 &self.endpoints,
                 &self.active_endpoint_id,
+                (&self.hidden_workspaces, self.hidden_workspaces_expanded),
                 &self.config,
                 self.navigate_workspace_id.as_deref(),
                 &mut self.mobile_switcher_scroll,
@@ -610,7 +641,9 @@ impl ClientShellState {
             self.hits.pane_splits.clear();
             self.hits.popup = None;
         }
-        self.compose_graphics(&mut frame, layout);
+        if !hidden_focus {
+            self.compose_graphics(&mut frame, layout);
+        }
         Some(frame)
     }
 }

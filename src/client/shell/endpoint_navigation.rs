@@ -140,17 +140,21 @@ impl ClientShellState {
                         .snapshot
                         .as_deref()
                         .map_or_else(Vec::new, |snapshot| {
-                            render::workspace_entries(snapshot, &HashSet::new())
-                                .into_iter()
-                                .filter_map(|entry| {
-                                    snapshot.workspaces.get(entry.index).map(|workspace| {
-                                        (
-                                            endpoint.endpoint_id.clone(),
-                                            workspace.workspace_id.clone(),
-                                        )
-                                    })
+                            render::workspace_entries(
+                                snapshot,
+                                &HashSet::new(),
+                                get_hidden_workspace_ids(
+                                    &self.hidden_workspaces,
+                                    &endpoint.endpoint_id,
+                                ),
+                            )
+                            .into_iter()
+                            .filter_map(|entry| {
+                                snapshot.workspaces.get(entry.index).map(|workspace| {
+                                    (endpoint.endpoint_id.clone(), workspace.workspace_id.clone())
                                 })
-                                .collect()
+                            })
+                            .collect()
                         })
                 })
                 .collect::<Vec<_>>();
@@ -188,6 +192,7 @@ impl ClientShellState {
             let agents = super::aggregate_navigation::online_agent_targets(
                 &self.endpoints,
                 self.config.agent_panel_sort,
+                &self.hidden_workspaces,
             );
             if agents.is_empty() {
                 return true;
@@ -262,6 +267,27 @@ impl ClientShellState {
             outcome.repaint = true;
             return false;
         }
+        let workspace_id = self
+            .endpoints
+            .iter()
+            .find(|endpoint| endpoint.endpoint_id == endpoint_id)
+            .and_then(|endpoint| endpoint.snapshot.as_deref())
+            .and_then(|snapshot| match &target {
+                ClientEndpointFocusTarget::Workspace(id) => Some(id.clone()),
+                ClientEndpointFocusTarget::Tab(id) => snapshot
+                    .tabs
+                    .iter()
+                    .find(|tab| &tab.tab_id == id)
+                    .map(|tab| tab.workspace_id.clone()),
+                ClientEndpointFocusTarget::Pane(id) => snapshot
+                    .panes
+                    .iter()
+                    .find(|pane| &pane.pane_id == id)
+                    .map(|pane| pane.workspace_id.clone()),
+            });
+        if let Some(workspace_id) = workspace_id {
+            self.restore_hidden_workspace(&endpoint_id, &workspace_id, outcome);
+        }
         if endpoint_id == self.active_endpoint_id {
             let method = match target {
                 ClientEndpointFocusTarget::Workspace(workspace_id) => {
@@ -278,7 +304,11 @@ impl ClientShellState {
                     })
                 }
             };
-            self.push_endpoint_method(method, outcome);
+            return self.push_endpoint_method_with_kind(
+                method,
+                PendingEndpointKind::Generic,
+                outcome,
+            );
         } else {
             outcome.actions.push(ClientShellAction::ActivateEndpoint {
                 endpoint_id,

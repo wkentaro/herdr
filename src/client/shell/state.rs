@@ -119,6 +119,7 @@ pub(super) struct ClientShellLayout {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum ClientMobileTarget {
+    ToggleHiddenWorkspaces,
     Machine(ClientEndpointId),
     NewWorkspace,
     Workspace {
@@ -140,6 +141,8 @@ pub(super) enum ClientMobileTarget {
 #[derive(Default)]
 pub(super) struct ShellHitMap {
     pub(super) machines: Vec<MachineHit>,
+    pub(super) hidden_workspaces_toggle: Rect,
+    pub(super) hidden_workspaces: Vec<(Rect, ClientEndpointId, String)>,
     pub(super) workspaces: Vec<WorkspaceHit>,
     pub(super) workspace_body: Rect,
     pub(super) workspace_scrollbar: Rect,
@@ -568,6 +571,7 @@ pub(super) struct ClientWorktreeRemoveOverlay {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ClientContextMenuAction {
+    Hide,
     Rename,
     Close,
     NewWorktree,
@@ -913,6 +917,10 @@ pub(crate) struct ClientShellState {
     pub(super) workspace_press: Option<ClientWorkspacePress>,
     pub(super) tab_press: Option<ClientTabPress>,
     pub(super) collapsed_groups: HashSet<String>,
+    pub(super) hidden_workspaces: HiddenWorkspaces,
+    pub(super) hidden_workspaces_expanded: bool,
+    pub(super) pending_workspace_hide: Option<(ClientEndpointId, String)>,
+    pub(super) hidden_focus_redirect_attempted: bool,
     pub(super) workspace_scroll: usize,
     pub(super) agent_scroll: usize,
     pub(super) tab_scroll: usize,
@@ -1056,6 +1064,10 @@ impl ClientShellState {
             workspace_press: None,
             tab_press: None,
             collapsed_groups: preferences.collapsed_groups.into_iter().collect(),
+            hidden_workspaces: preferences.hidden_workspaces,
+            hidden_workspaces_expanded: false,
+            pending_workspace_hide: None,
+            hidden_focus_redirect_attempted: false,
             workspace_scroll: 0,
             agent_scroll: 0,
             tab_scroll: 0,
@@ -1148,9 +1160,17 @@ impl ClientShellState {
         snapshot: &ClientShellSnapshot,
     ) -> Vec<WorkspaceEntry> {
         if self.mobile_layout_active() {
-            render::workspace_entries(snapshot, &HashSet::new())
+            render::workspace_entries(
+                snapshot,
+                &HashSet::new(),
+                get_hidden_workspace_ids(&self.hidden_workspaces, &self.active_endpoint_id),
+            )
         } else {
-            render::workspace_entries(snapshot, &self.collapsed_groups)
+            render::workspace_entries(
+                snapshot,
+                &self.collapsed_groups,
+                get_hidden_workspace_ids(&self.hidden_workspaces, &self.active_endpoint_id),
+            )
         }
     }
 
@@ -1508,7 +1528,12 @@ impl ClientShellState {
                 Some(_) => {}
             }
         }
+        let focus_changed = !endpoint_boot_changed
+            && self.snapshot.as_deref().is_some_and(|previous| {
+                previous.focused_workspace_id != snapshot.focused_workspace_id
+            });
         self.snapshot = Some(snapshot);
+        self.reconcile_workspace_visibility(focus_changed);
         let pending_surface = self.pending_pane_surface.take();
         if let Some(surface) = pending_surface {
             let matching = self.snapshot.as_ref().is_some_and(|snapshot| {

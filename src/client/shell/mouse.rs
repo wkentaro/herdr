@@ -489,7 +489,11 @@ impl ClientShellState {
             .map(|hit| (Some(hit.workspace_id.clone()), hit.rect.y.saturating_sub(1)))
             .collect::<Vec<_>>();
         let snapshot = self.snapshot.as_deref()?;
-        let entries = render::workspace_entries(snapshot, &self.collapsed_groups);
+        let entries = render::workspace_entries(
+            snapshot,
+            &self.collapsed_groups,
+            get_hidden_workspace_ids(&self.hidden_workspaces, &self.active_endpoint_id),
+        );
         let last_hit = self
             .hits
             .workspaces
@@ -1920,6 +1924,9 @@ impl ClientShellState {
                     self.agent_scroll = 0;
                     self.persist_chrome_preferences(outcome);
                     outcome.repaint = true;
+                    return;
+                }
+                if self.handle_hidden_workspace_click(point, outcome) {
                     return;
                 }
                 if self.handle_endpoint_machine_click(point, outcome) {

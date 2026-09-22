@@ -44,6 +44,7 @@ impl ClientShellState {
                 .agent_panel_sort_manual
                 .then_some(self.config.agent_panel_sort),
             collapsed_groups,
+            hidden_workspaces: self.hidden_workspaces.clone(),
         };
         if let Err(error) = preferences::store(path, preferences) {
             self.endpoint_error = Some(error);

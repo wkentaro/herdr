@@ -215,6 +215,8 @@ pub(super) struct ShellRenderState<'a> {
     pub(super) active_endpoint_id: &'a ClientEndpointId,
     pub(super) collapsed_endpoints: &'a HashSet<ClientEndpointId>,
     pub(super) collapsed_groups: &'a HashSet<String>,
+    pub(super) hidden_workspaces: &'a HiddenWorkspaces,
+    pub(super) hidden_workspaces_expanded: bool,
     pub(super) workspace_scroll: &'a mut usize,
     pub(super) agent_scroll: &'a mut usize,
     pub(super) tab_scroll: &'a mut usize,
@@ -272,6 +274,7 @@ pub(super) fn render_shell(
                 snapshot,
                 config,
                 state.selected_workspace_id,
+                get_hidden_workspace_ids(state.hidden_workspaces, state.active_endpoint_id),
                 &mut hits,
             );
         } else {
@@ -305,6 +308,8 @@ pub(super) fn render_shell(
         hits.agent_sort_toggle = Rect::default();
         hits.new_workspace = Rect::default();
         hits.machines.clear();
+        hits.hidden_workspaces_toggle = Rect::default();
+        hits.hidden_workspaces.clear();
         hits.workspaces.clear();
         hits.sidebar_tabs.clear();
         hits.agents.clear();

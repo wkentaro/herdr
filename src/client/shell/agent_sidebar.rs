@@ -20,21 +20,25 @@ pub(super) struct AgentRow {
 pub(super) fn ordered_agent_pane_ids(
     snapshot: &ClientShellSnapshot,
     sort: crate::config::AgentPanelSortConfig,
+    hidden: &HashSet<String>,
 ) -> Vec<String> {
     if snapshot.agent_view_label.is_some() {
         return snapshot
             .agent_order
             .iter()
             .filter(|pane_id| {
-                snapshot
-                    .agents
-                    .iter()
-                    .any(|agent| agent.pane_id == pane_id.as_str())
+                snapshot.agents.iter().any(|agent| {
+                    agent.pane_id == pane_id.as_str() && !hidden.contains(&agent.workspace_id)
+                })
             })
             .cloned()
             .collect();
     }
-    let mut agents = snapshot.agents.iter().collect::<Vec<_>>();
+    let mut agents = snapshot
+        .agents
+        .iter()
+        .filter(|agent| !hidden.contains(&agent.workspace_id))
+        .collect::<Vec<_>>();
     if sort == crate::config::AgentPanelSortConfig::Priority {
         agents.sort_by_key(|agent| {
             (
@@ -55,6 +59,7 @@ pub(super) fn render_agent_panel(
     snapshot: &ClientShellSnapshot,
     config: &ClientShellConfig,
     agent_scroll: &mut usize,
+    hidden: &HashSet<String>,
     hits: &mut ShellHitMap,
 ) {
     if !render_agent_panel_header(
@@ -67,7 +72,7 @@ pub(super) fn render_agent_panel(
         return;
     }
 
-    let rows = agent_rows(snapshot, config, None);
+    let rows = agent_rows(snapshot, config, None, hidden);
     render_agent_list(
         buffer,
         area,
@@ -238,8 +243,9 @@ pub(super) fn agent_rows(
     snapshot: &ClientShellSnapshot,
     config: &ClientShellConfig,
     machine: Option<&str>,
+    hidden: &HashSet<String>,
 ) -> Vec<AgentRow> {
-    ordered_agent_pane_ids(snapshot, config.agent_panel_sort)
+    ordered_agent_pane_ids(snapshot, config.agent_panel_sort, hidden)
         .into_iter()
         .filter_map(|pane_id| {
             let agent = snapshot

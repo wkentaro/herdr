@@ -451,6 +451,7 @@ impl ClientShellState {
     }
 
     pub(crate) fn receive_endpoint_unavailable(&mut self, message: String) -> bool {
+        self.pending_workspace_hide = None;
         self.push_endpoint_notice(
             ClientEndpointNoticeKind::Unavailable,
             message.clone(),
@@ -528,6 +529,9 @@ impl ClientShellState {
             self.endpoint_notice_seen.remove(&timeout_key);
         }
         if let Err(error) = &result {
+            if pending.method_name == "workspace.focus" {
+                self.pending_workspace_hide = None;
+            }
             let code = error.code.as_deref().unwrap_or("invalid_response");
             if !matches!(
                 code,
@@ -933,6 +937,7 @@ impl ClientShellState {
                 let agents = super::agent_sidebar::ordered_agent_pane_ids(
                     snapshot,
                     self.config.agent_panel_sort,
+                    get_hidden_workspace_ids(&self.hidden_workspaces, &self.active_endpoint_id),
                 );
                 Some(Method::PaneFocus(PaneTarget {
                     pane_id: agents.get(index)?.clone(),
@@ -942,6 +947,7 @@ impl ClientShellState {
                 let agents = super::agent_sidebar::ordered_agent_pane_ids(
                     snapshot,
                     self.config.agent_panel_sort,
+                    get_hidden_workspace_ids(&self.hidden_workspaces, &self.active_endpoint_id),
                 );
                 if agents.is_empty() {
                     return None;

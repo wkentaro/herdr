@@ -32,10 +32,10 @@ impl MobileItem {
         }
     }
 
-    fn action(label: &'static str, target: ClientMobileTarget, palette: &Palette) -> Self {
+    fn action(label: impl Into<String>, target: ClientMobileTarget, palette: &Palette) -> Self {
         Self {
             lines: vec![Line::from(Span::styled(
-                label,
+                label.into(),
                 Style::default()
                     .fg(palette.accent)
                     .bg(palette.panel_bg)
@@ -366,6 +366,7 @@ pub(super) fn render_mobile_switcher(
     snapshot: &ClientShellSnapshot,
     endpoints: &[ClientShellEndpoint],
     active_endpoint_id: &ClientEndpointId,
+    (hidden, hidden_expanded): (&HiddenWorkspaces, bool),
     config: &ClientShellConfig,
     selected_workspace_id: Option<&str>,
     scroll: &mut usize,
@@ -440,6 +441,8 @@ pub(super) fn render_mobile_switcher(
         snapshot,
         endpoints,
         active_endpoint_id,
+        hidden,
+        hidden_expanded,
         config,
         selected_workspace_id,
         viewport.width.saturating_sub(1),
@@ -576,6 +579,8 @@ fn mobile_items(
     snapshot: &ClientShellSnapshot,
     endpoints: &[ClientShellEndpoint],
     active_endpoint_id: &ClientEndpointId,
+    hidden: &HiddenWorkspaces,
+    hidden_expanded: bool,
     config: &ClientShellConfig,
     selected_workspace_id: Option<&str>,
     content_width: u16,
@@ -610,8 +615,11 @@ fn mobile_items(
             });
         }
     }
-    let agents =
-        super::aggregate_navigation::aggregate_agent_rows(endpoints, config.agent_panel_sort);
+    let agents = super::aggregate_navigation::aggregate_agent_rows(
+        endpoints,
+        config.agent_panel_sort,
+        hidden,
+    );
     let agent_view_label = snapshot.agent_view_label.as_deref();
     if !agents.is_empty() || agent_view_label.is_some() {
         let title = agent_view_label
@@ -751,7 +759,11 @@ fn mobile_items(
         palette,
     ));
     for endpoint in super::aggregate_navigation::cached_endpoint_snapshots(endpoints) {
-        for entry in super::render::workspace_entries(endpoint.snapshot, &HashSet::new()) {
+        for entry in super::render::workspace_entries(
+            endpoint.snapshot,
+            &HashSet::new(),
+            get_hidden_workspace_ids(hidden, endpoint.endpoint_id),
+        ) {
             let Some(workspace) = endpoint.snapshot.workspaces.get(entry.index) else {
                 continue;
             };
@@ -910,6 +922,29 @@ fn mobile_items(
     }
 
     items.push(MobileItem::section("menu", palette));
+    for row in super::workspace_visibility::collect_hidden_workspace_rows(
+        endpoints,
+        hidden,
+        hidden_expanded,
+    ) {
+        let (label, target) = match row {
+            super::workspace_visibility::HiddenWorkspaceRow::Header(count) => (
+                format!(
+                    "  {} Hidden ({count})",
+                    if hidden_expanded { "▾" } else { "▸" }
+                ),
+                ClientMobileTarget::ToggleHiddenWorkspaces,
+            ),
+            super::workspace_visibility::HiddenWorkspaceRow::Workspace(endpoint, workspace) => (
+                format!("    {} · {}", workspace.label, endpoint.label),
+                ClientMobileTarget::Workspace {
+                    endpoint_id: endpoint.endpoint_id.clone(),
+                    workspace_id: workspace.workspace_id.clone(),
+                },
+            ),
+        };
+        items.push(MobileItem::action(label, target, palette));
+    }
     for (index, (label, _)) in super::global_menu::global_menu_items(snapshot)
         .into_iter()
         .enumerate()
@@ -1052,6 +1087,9 @@ impl ClientShellState {
                     self.mode = ClientShellMode::Terminal;
                     self.navigate_workspace_id = None;
                 }
+            }
+            Some(ClientMobileTarget::ToggleHiddenWorkspaces) => {
+                self.hidden_workspaces_expanded = !self.hidden_workspaces_expanded;
             }
             Some(ClientMobileTarget::NewTab) => {
                 self.mobile_switcher_suspended = true;

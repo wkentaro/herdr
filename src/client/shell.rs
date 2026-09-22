@@ -29,7 +29,9 @@ mod scroll;
 mod settings;
 mod state;
 mod surface_patch;
+mod workspace_visibility;
 mod worktrees;
+use workspace_visibility::{get_hidden_workspace_ids, HiddenWorkspaces};
 
 pub(in crate::client::shell) use render::sidebar;
 pub(crate) use state::*;
