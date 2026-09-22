@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## [0.9.0-fork.2] - 2026-09-23
+
+Based on [upstream v0.9.0](https://github.com/herdrdev/herdr/releases/tag/v0.9.0).
+
+### Added
+
+- Hide workspaces without stopping their terminals or agents. A collapsed Hidden tree keeps them out of the normal workspace and agent lists, remembers the choice across restarts, and lets you restore projects individually with their machine labels. Notifications stay enabled and restore the workspace when selected.
+
 ## [0.9.0-fork.1] - 2026-09-16
 
 Based on [upstream v0.9.0](https://github.com/herdrdev/herdr/releases/tag/v0.9.0).
