@@ -142,7 +142,10 @@ fn hiding_last_local_workspace_waits_until_another_machine_is_active() {
     assert!(state.hidden_workspaces["local"].contains("ws_1"));
     let mut last = ClientShellInput::default();
     state.hide_workspace("ws_1".into(), &mut last);
-    assert!(last.actions.is_empty());
+    assert!(
+        matches!(&last.actions[..], [ClientShellAction::Endpoint { endpoint_id, request, .. }]
+        if endpoint_id == &remote && matches!(&request.method, crate::api::schema::Method::WorkspaceCreateDefault(_)))
+    );
     assert!(!get_hidden_workspace_ids(&state.hidden_workspaces, &remote).contains("ws_1"));
 }
 

@@ -65,9 +65,30 @@ impl App {
             Ok(env) => env,
             Err((code, message)) => return encode_error(id, &code, message),
         };
-        match self.create_workspace_with_launch_env(cwd, params.focus, extra_env) {
+        self.create_workspace_response(id, cwd, params.focus, params.label, extra_env)
+    }
+
+    pub(super) fn handle_workspace_create_default(&mut self, id: String) -> String {
+        self.create_workspace_response(
+            id,
+            self.resolve_new_terminal_cwd(None),
+            true,
+            None,
+            Vec::new(),
+        )
+    }
+
+    fn create_workspace_response(
+        &mut self,
+        id: String,
+        cwd: PathBuf,
+        focus: bool,
+        label: Option<String>,
+        extra_env: Vec<(String, String)>,
+    ) -> String {
+        match self.create_workspace_with_launch_env(cwd, focus, extra_env) {
             Ok(index) => {
-                if let Some(label) = params.label {
+                if let Some(label) = label {
                     if let Some(workspace) = self.state.workspaces.get_mut(index) {
                         workspace.set_custom_name(label);
                         crate::logging::workspace_renamed(&workspace.id);

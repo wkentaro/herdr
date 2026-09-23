@@ -108,7 +108,17 @@ impl ClientShellState {
                     .map(|workspace| (endpoint.endpoint_id.clone(), workspace.workspace_id.clone()))
             });
         let Some((endpoint_id, next_workspace)) = next else {
-            self.endpoint_error = Some("Keep at least one workspace visible.".into());
+            self.pending_workspace_hide = Some((self.active_endpoint_id.clone(), workspace_id));
+            if !self.push_endpoint_method_with_kind(
+                crate::api::schema::Method::WorkspaceCreateDefault(
+                    crate::api::schema::EmptyParams::default(),
+                ),
+                PendingEndpointKind::Generic,
+                outcome,
+            ) {
+                self.pending_workspace_hide = None;
+            }
+            self.navigate_workspace_id = None;
             outcome.repaint = true;
             return;
         };

@@ -529,7 +529,10 @@ impl ClientShellState {
             self.endpoint_notice_seen.remove(&timeout_key);
         }
         if let Err(error) = &result {
-            if pending.method_name == "workspace.focus" {
+            if matches!(
+                pending.method_name.as_str(),
+                "workspace.focus" | "workspace.create_default"
+            ) {
                 self.pending_workspace_hide = None;
             }
             let code = error.code.as_deref().unwrap_or("invalid_response");

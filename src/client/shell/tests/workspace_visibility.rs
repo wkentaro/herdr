@@ -148,7 +148,7 @@ fn hidden_tree_restores_individually_without_closing_runtime_objects() {
 }
 
 #[test]
-fn hide_active_waits_for_focus_and_protects_last_visible_workspace() {
+fn hide_active_waits_for_focus_and_replaces_last_visible_workspace() {
     let mut state = create_state();
     let mut outcome = ClientShellInput::default();
     state.hide_workspace("ws_1".into(), &mut outcome);
@@ -168,13 +168,50 @@ fn hide_active_waits_for_focus_and_protects_last_visible_workspace() {
     state.hide_workspace("ws_3".into(), &mut outcome);
     let mut last = ClientShellInput::default();
     state.hide_workspace("ws_2".into(), &mut last);
-    assert!(last.actions.is_empty());
+    assert!(
+        matches!(&last.actions[..], [ClientShellAction::Endpoint { request, .. }]
+        if matches!(&request.method, crate::api::schema::Method::WorkspaceCreateDefault(_)))
+    );
     assert!(!state.hidden_workspaces["local"].contains("ws_2"));
-    assert!(state
-        .endpoint_error
-        .as_deref()
-        .unwrap()
-        .contains("one workspace visible"));
+
+    let mut projected = state.snapshot.as_deref().unwrap().clone();
+    projected.revision += 1;
+    projected.focused_workspace_id = Some("ws_4".into());
+    for workspace in &mut projected.workspaces {
+        workspace.focused = false;
+    }
+    projected.workspaces.push(ClientShellWorkspace {
+        workspace_id: "ws_4".into(),
+        active_tab_id: "tab_4".into(),
+        label: "home".into(),
+        number: 4,
+        focused: true,
+        ..projected.workspaces[0].clone()
+    });
+    state.set_snapshot(Box::new(projected));
+    assert!(state.hidden_workspaces["local"].contains("ws_2"));
+}
+
+#[test]
+fn rejected_default_creation_cancels_hide() {
+    let mut state = create_state();
+    state.hide_workspace("ws_2".into(), &mut ClientShellInput::default());
+    state.hide_workspace("ws_3".into(), &mut ClientShellInput::default());
+    let mut outcome = ClientShellInput::default();
+    state.hide_workspace("ws_1".into(), &mut outcome);
+    let [ClientShellAction::Endpoint { request, .. }] = &outcome.actions[..] else {
+        panic!("create default action")
+    };
+    state.handle_endpoint_result(
+        "boot-1",
+        &request.id,
+        Err(ClientShellEndpointError {
+            code: Some("workspace_create_failed".into()),
+            message: "rejected".into(),
+        }),
+    );
+    assert!(state.pending_workspace_hide.is_none());
+    assert!(!state.hidden_workspaces["local"].contains("ws_1"));
 }
 
 #[test]
