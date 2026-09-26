@@ -46,13 +46,6 @@ pub(super) fn launch_cwd_for_terminal(
 }
 
 impl App {
-    pub(super) fn seed_cwd_from_workspace(&self, ws_idx: usize) -> Option<PathBuf> {
-        self.state
-            .workspaces
-            .get(ws_idx)?
-            .resolved_identity_cwd_from(&self.state.terminals, &self.terminal_runtimes)
-    }
-
     pub(super) fn launch_cwd_for_pane_in_workspace(
         &self,
         ws_idx: usize,
@@ -87,17 +80,14 @@ impl App {
         self.resolved_new_workspace_cwd_from_tab(ws_idx, tab_idx)
     }
 
+    // A new workspace starts a fresh context, so it never follows the source
+    // pane's cwd; `follow` falls back to home. Tabs and splits still follow.
     pub(crate) fn resolved_new_workspace_cwd_from_tab(
         &self,
-        ws_idx: usize,
-        tab_idx: Option<usize>,
+        _ws_idx: usize,
+        _tab_idx: Option<usize>,
     ) -> PathBuf {
-        let follow_cwd = tab_idx
-            .and_then(|tab_idx| self.state.workspaces.get(ws_idx)?.tabs.get(tab_idx))
-            .map(|tab| tab.layout.focused())
-            .and_then(|pane_id| self.launch_cwd_for_pane_in_workspace(ws_idx, pane_id))
-            .or_else(|| self.seed_cwd_from_workspace(ws_idx));
-        self.resolve_new_terminal_cwd(follow_cwd)
+        self.resolve_new_terminal_cwd(None)
     }
 
     pub(super) fn workspace_creation_source(&self) -> Option<usize> {

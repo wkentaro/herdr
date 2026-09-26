@@ -2317,7 +2317,7 @@ mod tests {
     }
 
     #[test]
-    fn workspace_creation_in_navigate_mode_uses_selected_workspace_seed_cwd() {
+    fn workspace_creation_in_navigate_mode_uses_selected_workspace() {
         let mut app = test_app();
         let mut first = Workspace::test_new("herdr");
         first.identity_cwd = std::path::PathBuf::from("/tmp/herdr");
@@ -2329,11 +2329,7 @@ mod tests {
         app.state.selected = 1;
         app.state.mode = Mode::Navigate;
 
-        let ws_idx = app.workspace_creation_source().unwrap();
-        let seed_cwd = app.seed_cwd_from_workspace(ws_idx).unwrap();
-
-        assert_eq!(ws_idx, 1);
-        assert_eq!(seed_cwd, std::path::PathBuf::from("/tmp/pion"));
+        assert_eq!(app.workspace_creation_source(), Some(1));
     }
 
     #[test]

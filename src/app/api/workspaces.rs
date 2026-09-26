@@ -400,11 +400,10 @@ mod tests {
         workspace::Workspace,
     };
 
-    // `new_cwd = follow` must anchor on the focused pane for every creation
-    // surface. Splits and tabs already do; a new workspace must follow the
-    // focused pane too, not the source workspace's first-tab root pane.
+    // A new workspace is a fresh context: under `new_cwd = follow` it starts in
+    // home instead of inheriting the focused pane, unlike splits and tabs.
     #[tokio::test]
-    async fn workspace_create_follows_focused_pane_cwd_not_first_tab_root() {
+    async fn workspace_create_ignores_focused_pane_cwd_and_starts_in_home() {
         use super::super::test_support::{exiting_test_command, shutdown_test_runtimes};
         use crate::config::ShellModeConfig;
 
@@ -448,7 +447,6 @@ mod tests {
         ));
         std::fs::create_dir_all(&focused_cwd).unwrap();
         let ws = &app.state.workspaces[0];
-        let root_cwd = ws.identity_cwd.clone();
         let focused_pane = ws.focused_pane_id().unwrap();
         assert_ne!(focused_pane, ws.tabs[0].root_pane);
         let terminal_id = ws.terminal_id(focused_pane).cloned().unwrap();
@@ -471,20 +469,21 @@ mod tests {
             ResponseResult::WorkspaceCreated { .. }
         ));
         let created_cwd = &app.state.workspaces[1].identity_cwd;
+        let home = std::path::PathBuf::from(std::env::var_os("HOME").unwrap());
         assert_eq!(
             crate::worktree::canonical_or_original(created_cwd),
-            crate::worktree::canonical_or_original(&focused_cwd)
+            crate::worktree::canonical_or_original(&home)
         );
         assert_ne!(
             crate::worktree::canonical_or_original(created_cwd),
-            crate::worktree::canonical_or_original(&root_cwd)
+            crate::worktree::canonical_or_original(&focused_cwd)
         );
         shutdown_test_runtimes(&mut app);
         let _ = std::fs::remove_dir_all(&focused_cwd);
     }
 
     #[tokio::test]
-    async fn workspace_create_uses_explicit_source_workspace() {
+    async fn workspace_create_validates_explicit_source_workspace_but_starts_in_home() {
         use super::super::test_support::{exiting_test_command, shutdown_test_runtimes};
         use crate::config::ShellModeConfig;
 
@@ -530,9 +529,10 @@ mod tests {
             success.result,
             ResponseResult::WorkspaceCreated { .. }
         ));
+        let home = std::path::PathBuf::from(std::env::var_os("HOME").unwrap());
         assert_eq!(
             crate::worktree::canonical_or_original(&app.state.workspaces[2].identity_cwd),
-            crate::worktree::canonical_or_original(&source_cwd)
+            crate::worktree::canonical_or_original(&home)
         );
 
         let invalid = app.handle_workspace_create(
