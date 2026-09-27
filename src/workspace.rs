@@ -180,6 +180,9 @@ pub struct Workspace {
     pub custom_name: Option<String>,
     /// Fallback workspace identity source for tests, old snapshots, or missing runtimes.
     pub identity_cwd: PathBuf,
+    /// User-set directory. When set, it overrides the panes as the workspace
+    /// identity and is where new tabs start.
+    pub pinned_cwd: Option<PathBuf>,
     /// CWD from which the cached automatic label and Git metadata were derived.
     pub(crate) cached_identity_cwd: PathBuf,
     /// Automatic workspace label cached outside the render path.
@@ -253,6 +256,7 @@ impl Workspace {
             id,
             custom_name: label,
             identity_cwd: identity_cwd.clone(),
+            pinned_cwd: None,
             cached_identity_cwd: identity_cwd.clone(),
             cached_auto_label,
             cached_git_status_key,
@@ -405,6 +409,7 @@ impl Workspace {
                 id,
                 custom_name: None,
                 identity_cwd: initial_cwd.clone(),
+                pinned_cwd: None,
                 cached_identity_cwd: initial_cwd.clone(),
                 cached_auto_label,
                 cached_git_status_key,
@@ -1009,7 +1014,12 @@ impl Workspace {
 
     #[cfg(test)]
     pub fn resolved_identity_cwd(&self) -> Option<PathBuf> {
-        Some(self.identity_cwd.clone())
+        Some(
+            self.pinned_cwd
+                .as_ref()
+                .unwrap_or(&self.identity_cwd)
+                .clone(),
+        )
     }
 
     pub fn resolved_identity_cwd_from(
@@ -1017,10 +1027,34 @@ impl Workspace {
         terminals: &HashMap<TerminalId, TerminalState>,
         terminal_runtimes: &TerminalRuntimeRegistry,
     ) -> Option<PathBuf> {
+        if let Some(cwd) = &self.pinned_cwd {
+            return Some(cwd.clone());
+        }
         self.tabs
             .first()
             .and_then(|tab| tab.cwd_for_pane(tab.root_pane, terminals, terminal_runtimes))
             .or_else(|| Some(self.identity_cwd.clone()))
+    }
+
+    /// Returns whether the value changed. A membership whose checkout no
+    /// longer contains the directory is dropped, because it would keep the
+    /// workspace grouped under a worktree it has left.
+    pub fn set_pinned_cwd(&mut self, cwd: Option<PathBuf>) -> bool {
+        if self.pinned_cwd == cwd {
+            return false;
+        }
+        if let Some(cwd) = &cwd {
+            self.identity_cwd = cwd.clone();
+            if self
+                .worktree_space
+                .as_ref()
+                .is_some_and(|space| !cwd.starts_with(&space.checkout_path))
+            {
+                self.worktree_space = None;
+            }
+        }
+        self.pinned_cwd = cwd;
+        true
     }
 
     #[cfg(test)]
@@ -1029,7 +1063,7 @@ impl Workspace {
             return name.clone();
         }
 
-        self.automatic_display_name_for_cwd(&self.identity_cwd)
+        self.automatic_display_name_for_cwd(self.pinned_cwd.as_ref().unwrap_or(&self.identity_cwd))
     }
 
     pub(crate) fn display_name_from_terminals(
@@ -1040,6 +1074,9 @@ impl Workspace {
             return name.clone();
         }
 
+        if let Some(cwd) = &self.pinned_cwd {
+            return self.automatic_display_name_for_cwd(cwd);
+        }
         let cwd = self
             .tabs
             .first()
@@ -1198,6 +1235,7 @@ impl Workspace {
             id: generate_workspace_id(),
             custom_name: Some(name.to_string()),
             identity_cwd: identity_cwd.clone(),
+            pinned_cwd: None,
             cached_identity_cwd: identity_cwd.clone(),
             cached_auto_label: fallback_label_from_cwd(&identity_cwd),
             cached_git_status_key: identity_cwd.clone(),
@@ -1431,6 +1469,27 @@ impl Workspace {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn set_pinned_cwd_keeps_membership_only_inside_its_checkout() {
+        let membership = WorktreeSpaceMembership {
+            key: "repo-key".into(),
+            label: "herdr".into(),
+            repo_root: PathBuf::from("/repo/herdr"),
+            checkout_path: PathBuf::from("/repo/herdr-wt/feature"),
+            is_linked_worktree: true,
+        };
+        let mut ws = Workspace::test_new("ws");
+        ws.worktree_space = Some(membership.clone());
+
+        assert!(ws.set_pinned_cwd(Some(PathBuf::from("/repo/herdr-wt/feature/src"))));
+        assert_eq!(ws.worktree_space, Some(membership));
+        assert!(!ws.set_pinned_cwd(Some(PathBuf::from("/repo/herdr-wt/feature/src"))));
+
+        assert!(ws.set_pinned_cwd(Some(PathBuf::from("/repo/herdr"))));
+        assert_eq!(ws.worktree_space, None);
+        assert_eq!(ws.identity_cwd, PathBuf::from("/repo/herdr"));
+    }
 
     #[test]
     fn generated_workspace_ids_are_short_base32_handles() {

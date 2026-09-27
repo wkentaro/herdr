@@ -210,6 +210,23 @@ fn workspace_command() -> Command {
                 .arg(required("label", "LABEL").num_args(1..)),
         )
         .subcommand(
+            Command::new("set-cwd")
+                .about("Set the directory new tabs in a workspace start in")
+                .override_usage("herdr workspace set-cwd <WORKSPACE_ID> <PATH>|--clear")
+                .arg(required("workspace_id", "WORKSPACE_ID"))
+                .arg(
+                    Arg::new("path")
+                        .value_name("PATH")
+                        .value_hint(ValueHint::DirPath),
+                )
+                .arg(flag("clear"))
+                .group(
+                    ArgGroup::new("set-cwd")
+                        .args(["path", "clear"])
+                        .required(true),
+                ),
+        )
+        .subcommand(
             Command::new("report-metadata")
                 .about("Report display-only workspace metadata")
                 .arg(required("workspace_id", "WORKSPACE_ID"))

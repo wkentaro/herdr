@@ -54,6 +54,8 @@ pub struct WorkspaceSnapshot {
     pub custom_name: Option<String>,
     pub identity_cwd: PathBuf,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pinned_cwd: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worktree_space: Option<crate::workspace::WorktreeSpaceMembership>,
     #[serde(default)]
     pub public_pane_numbers: HashMap<u32, usize>,
@@ -157,6 +159,7 @@ impl From<LegacyWorkspaceSnapshot> for WorkspaceSnapshot {
             id: None,
             custom_name: snap.custom_name,
             identity_cwd,
+            pinned_cwd: None,
             worktree_space: None,
             public_pane_numbers: HashMap::new(),
             next_public_pane_number: 0,
@@ -287,6 +290,7 @@ fn capture_workspace(
         identity_cwd: ws
             .resolved_identity_cwd_from(terminals, terminal_runtimes)
             .unwrap_or_else(|| ws.identity_cwd.clone()),
+        pinned_cwd: ws.pinned_cwd.clone(),
         worktree_space: ws.worktree_space.clone(),
         public_pane_numbers: ws
             .public_pane_numbers
@@ -661,6 +665,7 @@ mod tests {
                 id: Some("wproj".to_string()),
                 custom_name: Some("pi-mono".to_string()),
                 identity_cwd: PathBuf::from("/home/can/Projects/herdr"),
+                pinned_cwd: None,
                 worktree_space: None,
                 public_pane_numbers: HashMap::from([(0, 1), (1, 2)]),
                 next_public_pane_number: 3,
@@ -868,6 +873,23 @@ mod tests {
         assert_eq!(snapshot.sidebar_width, None);
         assert_eq!(snapshot.sidebar_section_split, None);
         assert!(snapshot.collapsed_space_keys.is_empty());
+    }
+
+    #[test]
+    fn capture_contract_tracks_pinned_cwd() {
+        let mut state = state_with_workspaces(&["main"]);
+        state.workspaces[0].set_pinned_cwd(Some(PathBuf::from("/repo/pinned")));
+
+        let snapshot = capture_from_state(&state);
+
+        assert_eq!(
+            snapshot.workspaces[0].pinned_cwd,
+            Some(PathBuf::from("/repo/pinned"))
+        );
+        assert_eq!(
+            snapshot.workspaces[0].identity_cwd,
+            PathBuf::from("/repo/pinned")
+        );
     }
 
     #[test]
@@ -1228,6 +1250,7 @@ mod tests {
                 id: Some("test-ws".to_string()),
                 custom_name: Some("fallback test".to_string()),
                 identity_cwd: PathBuf::from("/tmp"),
+                pinned_cwd: None,
                 worktree_space: None,
                 public_pane_numbers: HashMap::new(),
                 next_public_pane_number: 0,
