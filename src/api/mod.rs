@@ -32,6 +32,7 @@ pub(crate) fn request_changes_ui(request: &Request) -> bool {
             | Method::WorkspaceCreateDefault(_)
             | Method::WorkspaceFocus(_)
             | Method::WorkspaceRename(_)
+            | Method::WorkspaceSetCwd(_)
             | Method::WorkspaceMove(_)
             | Method::WorkspaceMoveBlock(_)
             | Method::WorkspaceReportMetadata(_)

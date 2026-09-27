@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use crate::api::schema::{
     EventData, EventEnvelope, EventKind, ResponseResult, WorkspaceCloseParams,
     WorkspaceCreateParams, WorkspaceMoveBlockParams, WorkspaceMoveParams, WorkspaceRenameParams,
-    WorkspaceReportMetadataParams, WorkspaceTarget,
+    WorkspaceReportMetadataParams, WorkspaceSetCwdParams, WorkspaceTarget,
 };
 use crate::app::App;
 
@@ -143,6 +143,45 @@ impl App {
                 label: params.label,
             },
         });
+
+        encode_success(
+            id,
+            ResponseResult::WorkspaceInfo {
+                workspace: self.workspace_info(index),
+            },
+        )
+    }
+
+    pub(super) fn handle_workspace_set_cwd(
+        &mut self,
+        id: String,
+        params: WorkspaceSetCwdParams,
+    ) -> String {
+        let Some(index) = self.parse_workspace_id(&params.workspace_id) else {
+            return workspace_not_found(id, &params.workspace_id);
+        };
+        if self.state.workspaces.get(index).is_none() {
+            return workspace_not_found(id, &params.workspace_id);
+        }
+        let cwd = match params.cwd.as_deref() {
+            None => None,
+            // Canonical so worktree membership checks compare like with like.
+            Some(raw) => match std::fs::canonicalize(crate::worktree::expand_tilde_path(raw)) {
+                Ok(cwd) if cwd.is_dir() => Some(cwd),
+                _ => {
+                    return encode_error(
+                        id,
+                        "invalid_cwd",
+                        format!("{raw} is not an existing directory"),
+                    )
+                }
+            },
+        };
+        if self.state.workspaces[index].set_pinned_cwd(cwd) {
+            self.schedule_session_save();
+            self.request_git_identity_refresh(std::time::Instant::now());
+            self.emit_workspace_updated(index);
+        }
 
         encode_success(
             id,
@@ -569,6 +608,130 @@ mod tests {
         );
         shutdown_test_runtimes(&mut app);
         let _ = std::fs::remove_dir_all(&source_cwd);
+    }
+
+    fn unique_temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "herdr-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::canonicalize(dir).unwrap()
+    }
+
+    fn new_tab_cwd(app: &mut App) -> PathBuf {
+        let response = app.handle_tab_create(
+            "tab".into(),
+            crate::api::schema::TabCreateParams {
+                workspace_id: None,
+                cwd: None,
+                focus: false,
+                label: None,
+                env: Default::default(),
+            },
+        );
+        let _: SuccessResponse = serde_json::from_str(&response).unwrap();
+        let tab = app.state.workspaces[0].tabs.last().unwrap();
+        let terminal_id = tab.terminal_id(tab.root_pane).unwrap();
+        crate::worktree::canonical_or_original(&app.state.terminals[terminal_id].cwd)
+    }
+
+    #[tokio::test]
+    async fn workspace_set_cwd_pins_new_tabs_and_label_until_cleared() {
+        use super::super::test_support::{exiting_test_command, shutdown_test_runtimes};
+        use crate::config::ShellModeConfig;
+
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &Config::default(),
+            crate::app::AppPolicy::TEST,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        app.state.default_shell = exiting_test_command().into();
+        app.state.shell_mode = ShellModeConfig::NonLogin;
+        app.state.workspaces = vec![Workspace::test_new("spaces")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.ensure_test_terminals();
+        // Without runtimes, cwd resolution uses the cached terminal state below.
+        shutdown_test_runtimes(&mut app);
+        let focused_cwd = unique_temp_dir("focused");
+        let pinned_cwd = unique_temp_dir("pinned");
+        // Only an automatic label follows the directory; a custom name wins.
+        app.state.workspaces[0].custom_name = None;
+        let root = app.state.workspaces[0].tabs[0].root_pane;
+        let terminal_id = app.state.workspaces[0].terminal_id(root).cloned().unwrap();
+        app.state.terminals.get_mut(&terminal_id).unwrap().cwd = focused_cwd.clone();
+        let workspace_id = app.public_workspace_id(0);
+
+        let response = app.handle_workspace_set_cwd(
+            "set".into(),
+            WorkspaceSetCwdParams {
+                workspace_id: workspace_id.clone(),
+                cwd: Some(pinned_cwd.display().to_string()),
+            },
+        );
+        let success: SuccessResponse = serde_json::from_str(&response).unwrap();
+        let ResponseResult::WorkspaceInfo { workspace } = success.result else {
+            panic!("expected workspace info");
+        };
+        assert_eq!(workspace.cwd, Some(pinned_cwd.display().to_string()));
+        assert_eq!(
+            workspace.label,
+            pinned_cwd.file_name().unwrap().to_str().unwrap()
+        );
+        assert_eq!(new_tab_cwd(&mut app), pinned_cwd);
+        shutdown_test_runtimes(&mut app);
+
+        let response = app.handle_workspace_set_cwd(
+            "clear".into(),
+            WorkspaceSetCwdParams {
+                workspace_id,
+                cwd: None,
+            },
+        );
+        let success: SuccessResponse = serde_json::from_str(&response).unwrap();
+        let ResponseResult::WorkspaceInfo { workspace } = success.result else {
+            panic!("expected workspace info");
+        };
+        assert_eq!(workspace.cwd, None);
+        assert_eq!(new_tab_cwd(&mut app), focused_cwd);
+        shutdown_test_runtimes(&mut app);
+        let _ = std::fs::remove_dir_all(&focused_cwd);
+        let _ = std::fs::remove_dir_all(&pinned_cwd);
+    }
+
+    #[test]
+    fn workspace_set_cwd_rejects_missing_directory_without_changing_state() {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &Config::default(),
+            crate::app::AppPolicy::TEST,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        app.state.workspaces = vec![Workspace::test_new("spaces")];
+        app.state.active = Some(0);
+        let missing = std::env::temp_dir().join("herdr-set-cwd-missing-dir");
+
+        let response = app.handle_workspace_set_cwd(
+            "set".into(),
+            WorkspaceSetCwdParams {
+                workspace_id: app.public_workspace_id(0),
+                cwd: Some(missing.display().to_string()),
+            },
+        );
+
+        let error: ErrorResponse = serde_json::from_str(&response).unwrap();
+        assert_eq!(error.error.code, "invalid_cwd");
+        assert_eq!(app.state.workspaces[0].pinned_cwd, None);
     }
 
     fn app_with_linked_worktree() -> App {

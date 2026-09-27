@@ -672,7 +672,7 @@ impl App {
         });
     }
 
-    fn emit_workspace_updated(&mut self, ws_idx: usize) {
+    pub(super) fn emit_workspace_updated(&mut self, ws_idx: usize) {
         self.emit_event(EventEnvelope {
             event: EventKind::WorkspaceUpdated,
             data: EventData::WorkspaceUpdated {

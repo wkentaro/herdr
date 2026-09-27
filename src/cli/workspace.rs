@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use crate::api::schema::{
     Method, WorkspaceCreateParams, WorkspaceRenameParams, WorkspaceReportMetadataParams,
+    WorkspaceSetCwdParams,
 };
 
 pub(super) fn run_workspace_command(args: &[String]) -> std::io::Result<i32> {
@@ -16,6 +17,7 @@ pub(super) fn run_workspace_command(args: &[String]) -> std::io::Result<i32> {
         "get" => workspace_get(&args[1..]),
         "focus" => workspace_focus(&args[1..]),
         "rename" => workspace_rename(&args[1..]),
+        "set-cwd" => workspace_set_cwd(&args[1..]),
         "report-metadata" => workspace_report_metadata(&args[1..]),
         "close" => workspace_close(&args[1..]),
         "help" | "--help" | "-h" => {
@@ -140,6 +142,26 @@ fn workspace_rename(args: &[String]) -> std::io::Result<i32> {
     })
 }
 
+fn workspace_set_cwd(args: &[String]) -> std::io::Result<i32> {
+    let [raw_workspace_id, path] = args else {
+        eprintln!("usage: herdr workspace set-cwd <workspace_id> <path|--clear>");
+        return Ok(2);
+    };
+    let cwd = if path == "--clear" {
+        None
+    } else {
+        // The server resolves paths in its own cwd, so make relative ones
+        // relative to where the user typed the command.
+        let expanded = crate::worktree::expand_tilde_path(path);
+        Some(std::path::absolute(&expanded)?.display().to_string())
+    };
+
+    super::runtime::workspace_set_cwd(WorkspaceSetCwdParams {
+        workspace_id: super::normalize_workspace_id(raw_workspace_id),
+        cwd,
+    })
+}
+
 fn workspace_report_metadata(args: &[String]) -> std::io::Result<i32> {
     let Some(raw_workspace_id) = args.first() else {
         eprintln!("usage: herdr workspace report-metadata <workspace_id> --source ID [--token NAME=VALUE] [--clear-token NAME] [--seq N] [--ttl-ms N]");
@@ -248,6 +270,7 @@ fn print_workspace_help() {
     eprintln!("  herdr workspace get <workspace_id>");
     eprintln!("  herdr workspace focus <workspace_id>");
     eprintln!("  herdr workspace rename <workspace_id> <label>");
+    eprintln!("  herdr workspace set-cwd <workspace_id> <path|--clear>");
     eprintln!("  herdr workspace report-metadata <workspace_id> --source ID [--token NAME=VALUE] [--clear-token NAME] [--seq N] [--ttl-ms N]");
     eprintln!("  herdr workspace close <workspace_id> [--group]");
 }

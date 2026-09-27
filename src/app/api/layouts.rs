@@ -341,17 +341,17 @@ impl App {
         if let Some(cwd) = pane.cwd.as_ref() {
             return PathBuf::from(cwd);
         }
-        let follow_cwd = replace_target.and_then(|(_, tab_idx)| {
-            let pane_id = self
-                .state
-                .workspaces
-                .get(ws_idx)?
-                .tabs
-                .get(tab_idx)?
-                .layout
-                .focused();
-            self.launch_cwd_for_pane_in_workspace(ws_idx, pane_id)
-        });
+        // Replacing an existing tab's layout keeps that tab's own directory.
+        let Some((_, tab_idx)) = replace_target else {
+            return self.resolve_new_tab_cwd(ws_idx);
+        };
+        let follow_cwd = self
+            .state
+            .workspaces
+            .get(ws_idx)
+            .and_then(|ws| ws.tabs.get(tab_idx))
+            .map(|tab| tab.layout.focused())
+            .and_then(|pane_id| self.launch_cwd_for_pane_in_workspace(ws_idx, pane_id));
         self.resolve_new_terminal_cwd(
             follow_cwd.or_else(|| self.focused_pane_cwd_in_workspace(ws_idx)),
         )

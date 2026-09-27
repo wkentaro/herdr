@@ -11,6 +11,8 @@ A workspace is the top-level project container. Use one workspace per repo, task
 
 A workspace owns tabs and panes. Its sidebar state rolls up from the agents inside it, so you can see which project needs attention.
 
+By default, a workspace takes its name and Git details from the first tab's root pane, and a new tab starts in the focused pane's directory. Run `herdr workspace set-cwd <workspace_id> <path>` to pin a directory instead: new tabs start there, and the automatic name and Git details follow it. This fixes a workspace that was opened in the wrong worktree. Splits still follow their pane, and `--clear` restores the default.
+
 Right-click a workspace and choose **Hide** to move it into the collapsed **Hidden** tree at the bottom of the sidebar. Its terminals and agents keep running, but it and its agents no longer appear in normal navigation. Expand Hidden and click a workspace to restore and focus it; each entry includes its machine label.
 
 Hiding the active workspace switches to another visible workspace. Hiding the last visible workspace opens a replacement using the same default directory behavior as closing the last workspace. Linked worktrees are hidden individually. Hidden choices are saved on this client across restarts. Notifications remain enabled, and clicking one restores its workspace. Keyboard users can open a workspace's menu with `shift+F10` in workspace navigation and restore hidden workspaces through the navigator.

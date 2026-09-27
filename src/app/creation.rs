@@ -71,6 +71,20 @@ impl App {
         resolve_new_terminal_cwd(&self.state.new_terminal_cwd, follow_cwd)
     }
 
+    // A pinned directory beats both the focused pane and the new_cwd policy:
+    // the user chose it for this workspace specifically.
+    pub(super) fn resolve_new_tab_cwd(&self, ws_idx: usize) -> PathBuf {
+        if let Some(cwd) = self
+            .state
+            .workspaces
+            .get(ws_idx)
+            .and_then(|ws| ws.pinned_cwd.clone())
+        {
+            return cwd;
+        }
+        self.resolve_new_terminal_cwd(self.focused_pane_cwd_in_workspace(ws_idx))
+    }
+
     pub(crate) fn resolved_new_workspace_cwd_from(&self, ws_idx: usize) -> PathBuf {
         let tab_idx = self
             .state
@@ -389,6 +403,7 @@ impl App {
                     checkout_path: space.checkout_path.display().to_string(),
                     is_linked_worktree: space.is_linked_worktree,
                 }),
+            cwd: ws.pinned_cwd.as_ref().map(|cwd| cwd.display().to_string()),
         }
     }
 }
